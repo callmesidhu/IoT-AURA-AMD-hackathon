@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 import 'red_alert_screen.dart';
 import 'alert_list_screen.dart';
 import 'settings_screen.dart';
-import 'dart:math';
 
 class MainNavigationScreen extends StatefulWidget {
   const MainNavigationScreen({super.key});
@@ -116,7 +116,7 @@ class MapDashboardScreen extends StatefulWidget {
 
 class _MapDashboardScreenState extends State<MapDashboardScreen>
     with TickerProviderStateMixin {
-  GoogleMapController? _mapController;
+  final MapController _mapController = MapController();
 
   // Fake stream controller to simulate firebase for the UI layout requests.
   final StreamController<String> _mockStreamController =
@@ -188,92 +188,121 @@ class _MapDashboardScreenState extends State<MapDashboardScreen>
   @override
   void dispose() {
     _mockStreamController.close();
-    _mapController?.dispose();
+    _mapController.dispose();
     _pulseController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final Set<Marker> markers = {
-      Marker(
-        markerId: const MarkerId("user"),
-        position: _userLocation,
-        infoWindow: const InfoWindow(title: "You are here"),
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
-      ),
-      Marker(
-        markerId: const MarkerId("box_1"),
-        position: _box1Location,
-        infoWindow: const InfoWindow(title: "Sentinel Node 1"),
-        icon: BitmapDescriptor.defaultMarkerWithHue(
-          _isFireDetected ? BitmapDescriptor.hueRed : BitmapDescriptor.hueGreen,
-        ),
-      ),
-    };
-
     return Scaffold(
       body: Stack(
         children: [
-          GoogleMap(
-            initialCameraPosition: const CameraPosition(
-              target: _userLocation,
-              zoom: 14.0,
+          FlutterMap(
+            mapController: _mapController,
+            options: const MapOptions(
+              initialCenter: _userLocation,
+              initialZoom: 14.0,
             ),
-            markers: markers,
-            circles: _isFireDetected
-                ? {
-                    Circle(
-                      circleId: const CircleId('danger_zone_static'),
-                      center: _box1Location,
-                      radius: 500,
-                      fillColor: Colors.red.withOpacity(0.2),
-                      strokeColor: Colors.red,
-                      strokeWidth: 2,
+            children: [
+              TileLayer(
+                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                userAgentPackageName: 'com.example.aura_client',
+              ),
+              PolylineLayer(
+                polylines: [
+                  if (!_isFireDetected)
+                    Polyline(
+                      points: const [_userLocation, _box1Location, _safeExit],
+                      color: Colors.blue,
+                      strokeWidth: 5,
+                    )
+                  else ...[
+                    Polyline(
+                      points: const [_userLocation, _box1Location, _safeExit],
+                      color: Colors.red.withOpacity(0.5),
+                      strokeWidth: 3,
                     ),
-                    Circle(
-                      circleId: const CircleId('danger_zone_pulse'),
-                      center: _box1Location,
-                      radius: 500,
-                      // ignore: deprecated_member_use
-                      fillColor: Colors.red.withOpacity(_pulseAnimation.value),
-                      strokeColor: Colors.transparent,
-                      strokeWidth: 0,
+                    Polyline(
+                      points: const [
+                        _userLocation,
+                        LatLng(11.6750, 76.1400),
+                        _safeExit,
+                      ],
+                      color: Colors.green,
+                      strokeWidth: 6,
                     ),
-                  }
-                : {},
-            polylines: {
-              if (!_isFireDetected)
-                Polyline(
-                  polylineId: const PolylineId("primary_route"),
-                  points: const [_userLocation, _box1Location, _safeExit],
-                  color: Colors.blue,
-                  width: 5,
-                )
-              else ...[
-                Polyline(
-                  polylineId: const PolylineId("blocked_route"),
-                  points: const [_userLocation, _box1Location, _safeExit],
-                  color: Colors.red.withOpacity(0.5),
-                  width: 3,
-                  patterns: [PatternItem.dash(10), PatternItem.gap(10)],
-                ),
-                Polyline(
-                  polylineId: const PolylineId("safe_route"),
-                  points: const [
-                    _userLocation,
-                    LatLng(11.6750, 76.1400),
-                    _safeExit,
                   ],
-                  color: Colors.green,
-                  width: 6,
+                ],
+              ),
+              if (_isFireDetected)
+                CircleLayer(
+                  circles: [
+                    CircleMarker(
+                      point: _box1Location,
+                      radius: 500,
+                      useRadiusInMeter: true,
+                      color: Colors.red.withOpacity(0.2),
+                      borderColor: Colors.red,
+                      borderStrokeWidth: 2,
+                    ),
+                    CircleMarker(
+                      point: _box1Location,
+                      radius: 500,
+                      useRadiusInMeter: true,
+                      color: Colors.red.withOpacity(_pulseAnimation.value),
+                      borderColor: Colors.transparent,
+                      borderStrokeWidth: 0,
+                    ),
+                  ],
                 ),
-              ],
-            },
-            myLocationEnabled: true,
-            myLocationButtonEnabled: false,
-            zoomControlsEnabled: false,
-            onMapCreated: (controller) => _mapController = controller,
+              MarkerLayer(
+                markers: [
+                  Marker(
+                    point: _userLocation,
+                    width: 80,
+                    height: 80,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.person_pin_circle,
+                          color: Colors.blue,
+                          size: 40,
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: const Text(
+                            'You',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Marker(
+                    point: _box1Location,
+                    width: 60,
+                    height: 60,
+                    child: Icon(
+                      Icons.location_on,
+                      color: _isFireDetected ? Colors.red : Colors.green,
+                      size: 40,
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ),
 
           SafeArea(
