@@ -19,9 +19,7 @@ __pycache__/
 # Logs
 *.log
 
-# Database
-*.db
-*.sqlite3
+
 
 # OS
 .DS_Store
