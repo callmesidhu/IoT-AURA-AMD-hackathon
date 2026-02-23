@@ -11,7 +11,9 @@
 #define DHTPIN 4 // D2 on XIAO C3 = GPIO4
 #define DHTTYPE DHT11
 #define BUZZER_PIN 6  // D4 on XIAO C3 = GPIO6
+#define RELAY_PIN 5   // D3 on XIAO C3 = GPIO5 (GPIO10 is SPI flash, unstable!)
 #define GAS_LIMIT 800 // trigger buzzer above this
+#define DISTANCE_LIMIT 10.0 // cm - trigger relay OFF below this
 
 Scheduler userScheduler;
 painlessMesh mesh;
@@ -115,6 +117,28 @@ void receivedCallback(uint32_t from, String &msg) {
       }
     }
   }
+
+  // Relay control from gateway "distance"
+  // Simply set pin on EVERY message. Arduino handles debounce.
+  if (doc.containsKey("distance")) {
+    float distance = doc["distance"] | -1.0;
+
+    // Ignore invalid readings (0 or negative)
+    if (distance <= 0) {
+      Serial.printf("[C3] Ignoring invalid distance: %.2f\n", distance);
+      return;
+    }
+
+    // Direct pin control: obstacle < 10 = HIGH, clear >= 10 = LOW
+    if (distance < DISTANCE_LIMIT) {
+      digitalWrite(RELAY_PIN, HIGH); // Signal obstacle to Arduino
+      Serial.printf("[C3] Distance: %.2f cm -> PIN HIGH (OBSTACLE)\n",
+                    distance);
+    } else {
+      digitalWrite(RELAY_PIN, LOW); // Signal path clear to Arduino
+      Serial.printf("[C3] Distance: %.2f cm -> PIN LOW (CLEAR)\n", distance);
+    }
+  }
 }
 
 void newConnectionCallback(uint32_t nodeId) {
@@ -140,9 +164,12 @@ void setup() {
   // Initialize DHT
   dht.begin();
 
-  // Configure Buzzer Pin
+  // Configure Buzzer and Relay Pins
   pinMode(BUZZER_PIN, OUTPUT);
+  pinMode(RELAY_PIN, OUTPUT);
+
   digitalWrite(BUZZER_PIN, LOW);
+  digitalWrite(RELAY_PIN, LOW); // Default: LOW = path clear (no obstacle)
 
   Serial.println("\n================================");
   Serial.println("  XIAO C3 Node (DHT+Buzzer) Starting");
