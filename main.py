@@ -4,7 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import List
-from datetime import datetime
+from datetime import datetime, timezone
 import asyncio
 import cv2
 import numpy as np
@@ -18,6 +18,9 @@ from routes.sensor_positions import router as positions_router
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Satwa Sensor Dashboard")
+
+# Global in-memory store for latest readings per sensor
+latest_sensor_data = {}
 
 # ----------------------------
 # DroidCam Background Task
@@ -39,7 +42,9 @@ except Exception as e:
     print(f"Error loading fire_model.h5: {e}")
 
 
-async def poll_camera_fire_detection():
+import threading
+
+def poll_camera_fire_detection_sync():
     print(f"Starting DroidCam Fire Detection Polling on {DROIDCAM_URL}...")
     
     # Use OpenCV VideoCapture for the stream
@@ -50,7 +55,8 @@ async def poll_camera_fire_detection():
             if not cap.isOpened():
                 print("Reconnecting to DroidCam video stream...")
                 cap.open(DROIDCAM_URL)
-                await asyncio.sleep(2)
+                import time
+                time.sleep(2)
                 continue
 
             ret, frame = cap.read()
@@ -96,7 +102,7 @@ async def poll_camera_fire_detection():
                     alert_payload = {
                         "sensor": "camera",
                         "value": fire_value,
-                        "timestamp": datetime.utcnow().isoformat(),
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
                         "threat_level": "critical",
                         "alert": {
                             "title": "FIRE DETECTED!",
@@ -105,18 +111,26 @@ async def poll_camera_fire_detection():
                             "sensor": "camera"
                         }
                     }
+                    latest_sensor_data["camera"] = alert_payload
+                    print(f"DEBUG: Camera Fire Alert Sent - Value: {fire_value}")
                     if manager:
-                        await manager.broadcast(alert_payload)
+                        # Schedule coroutine on main event loop implicitly handled since broadcast might not be thread-safe
+                        asyncio.run_coroutine_threadsafe(manager.broadcast(alert_payload), loop)
                 else:
                     # Notify safe state to clear alerts
                     safe_payload = {
                         "sensor": "camera",
                         "value": fire_value,
-                        "timestamp": datetime.utcnow().isoformat(),
+                        "timestamp": datetime.now().isoformat(),
                         "threat_level": "safe"
                     }
+                    latest_sensor_data["camera"] = safe_payload
+                    # Only print every few frames to avoid spamming, or just print value
+                    if fire_value > 0:
+                        print(f"DEBUG: Camera Frame - No Fire, but found {fire_value} fire-like pixels.")
+                    
                     if manager:
-                        await manager.broadcast(safe_payload)
+                        asyncio.run_coroutine_threadsafe(manager.broadcast(safe_payload), loop)
             else:
                 print("Failed to read frame, reconnecting...")
                 cap.release()
@@ -124,11 +138,14 @@ async def poll_camera_fire_detection():
         except Exception as e:
             print(f"Error polling DroidCam: {e}")
             
-        await asyncio.sleep(1)
+        import time
+        time.sleep(1)
 
 @app.on_event("startup")
 async def startup_event():
-    asyncio.create_task(poll_camera_fire_detection())
+    global loop
+    loop = asyncio.get_running_loop()
+    threading.Thread(target=poll_camera_fire_detection_sync, daemon=True).start()
 
 # ----------------------------
 # CORS — allow browser connections from any origin on the LAN
@@ -154,6 +171,18 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 @app.get("/")
 async def root():
     return FileResponse("static/index.html")
+
+# ----------------------------
+# Sensor Model
+# ----------------------------
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+class ValueOnly(BaseModel):
+    value: float
+
 
 # ----------------------------
 # Authentication
@@ -206,18 +235,6 @@ manager = ConnectionManager()
 
 
 # ----------------------------
-# Sensor Model
-# ----------------------------
-
-class LoginRequest(BaseModel):
-    email: str
-    password: str
-
-class ValueOnly(BaseModel):
-    value: float
-
-
-# ----------------------------
 # WebSocket Endpoint
 # ----------------------------
 
@@ -235,20 +252,18 @@ async def websocket_endpoint(websocket: WebSocket):
 # Sensor Endpoints (Arduino POSTs here)
 # ----------------------------
 
-latest_sensor_data = {}  # In-memory store for latest readings per sensor
-
 async def process_sensor(sensor_name: str, value: float):
     payload = {
         "sensor": sensor_name,
         "value": value,
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": datetime.now(timezone.utc).isoformat()
     }
     latest_sensor_data[sensor_name] = payload
-    print(payload)
+    print(f"DEBUG: Received {sensor_name}: {value}")
     await manager.broadcast(payload)  # push to all WebSocket clients (map)
 
 
-@app.get("/api/sensor-data")
+@app.get("/sensor/all-data")
 async def get_sensor_data():
     return list(latest_sensor_data.values())
 

@@ -144,7 +144,7 @@ class ApiService {
   /// Fetch initial sensor data from the backend
   Future<List<Map<String, dynamic>>> fetchInitialSensorData() async {
     try {
-      final response = await http.get(Uri.parse('$_baseUrl/api/sensor-data'));
+      final response = await http.get(Uri.parse('$_baseUrl/sensor/all-data'));
       if (response.statusCode == 200) {
         final list = jsonDecode(response.body) as List;
         return list.cast<Map<String, dynamic>>();
