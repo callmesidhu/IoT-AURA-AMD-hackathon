@@ -118,7 +118,7 @@ async def gas(data: ValueOnly):
     return {"status": "ok"}
 
 
-@app.post("/sensor/ultra-sonic")
+@app.post("/sensor/ultrasonic")
 async def ultrasonic(data: ValueOnly):
-    await process_sensor("ultra-sonic", data.value)
+    await process_sensor("ultrasonic", data.value)
     return {"status": "ok"}
