@@ -6,7 +6,7 @@ IMG_SIZE = 128
 BATCH_SIZE = 32
 
 train_ds = tf.keras.preprocessing.image_dataset_from_directory(
-    "dataset",
+    "image_data",
     image_size=(IMG_SIZE, IMG_SIZE),
     batch_size=BATCH_SIZE
 )
@@ -28,13 +28,18 @@ model = models.Sequential([
     layers.Dense(1, activation='sigmoid')
 ])
 
+print("Compiling model...", flush=True)
 model.compile(
     optimizer='adam',
     loss='binary_crossentropy',
     metrics=['accuracy']
 )
 
-model.fit(train_ds, epochs=10)
-
-model.save("fire_model.h5")
-print("Model saved to fire_model.h5")
+try:
+    print("Starting training...", flush=True)
+    model.fit(train_ds, epochs=10, verbose=2)
+    print("Training finished! Saving model...", flush=True)
+    model.save("fire_model.h5")
+    print("Model saved to fire_model.h5 successfully!", flush=True)
+except Exception as e:
+    print(f"CRITICAL ERROR DURING TRAINING: {e}")

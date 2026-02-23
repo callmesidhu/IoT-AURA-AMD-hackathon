@@ -124,7 +124,7 @@ async def poll_camera_fire_detection():
         except Exception as e:
             print(f"Error polling DroidCam: {e}")
             
-        await asyncio.sleep(5)
+        await asyncio.sleep(1)
 
 @app.on_event("startup")
 async def startup_event():
@@ -231,6 +231,38 @@ async def humidity(data: ValueOnly):
 async def gas(data: ValueOnly):
     await process_sensor("gas-leakage", data.value)
     return {"status": "ok"}
+
+
+@app.get("/evacuation/route")
+async def get_evacuation_route(danger_lat: float, danger_lng: float):
+    # Simulated routing around danger
+    # Real app would use a routing engine like OSRM or Google Maps Directions
+    # Generates a path that cuts through the danger (blocked)
+    # And a path that routes around it in a semicircle (safe)
+    
+    offset = 0.005 # rough degree offset (~500m)
+    
+    start_point = [danger_lat - offset, danger_lng]
+    end_point = [danger_lat + offset, danger_lng]
+    
+    # Blocked route goes straight through the danger point
+    blocked_route = [start_point, [danger_lat, danger_lng], end_point]
+    
+    # Safe route curves around the danger point to the east
+    safe_route = [
+        start_point,
+        [danger_lat - (offset/2), danger_lng + offset],
+        [danger_lat, danger_lng + (offset * 1.5)],
+        [danger_lat + (offset/2), danger_lng + offset],
+        end_point
+    ]
+    
+    return {
+        "status": "success",
+        "danger_zone": [danger_lat, danger_lng],
+        "blocked_route": blocked_route,
+        "safe_route": safe_route
+    }
 
 
 @app.post("/sensor/ultrasonic")
