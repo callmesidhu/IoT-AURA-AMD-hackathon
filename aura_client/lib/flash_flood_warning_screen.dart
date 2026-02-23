@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 
 class FlashFloodWarningScreen extends StatelessWidget {
-  const FlashFloodWarningScreen({super.key});
+  final String location;
+  const FlashFloodWarningScreen({super.key, this.location = 'Sensor Zone'});
 
   @override
   Widget build(BuildContext context) {
@@ -53,7 +54,7 @@ class FlashFloodWarningScreen extends StatelessWidget {
                 ),
                 const SizedBox(width: 4),
                 Text(
-                  'Idukki District',
+                  location,
                   style: TextStyle(fontSize: 16, color: Colors.grey.shade600),
                 ),
               ],

@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 import 'red_alert_screen.dart';
+import 'flash_flood_warning_screen.dart';
 import 'alert_list_screen.dart';
 import 'settings_screen.dart';
-import 'dart:math';
+import 'api_service.dart';
 
 class MainNavigationScreen extends StatefulWidget {
   const MainNavigationScreen({super.key});
@@ -16,17 +18,16 @@ class MainNavigationScreen extends StatefulWidget {
 class _MainNavigationScreenState extends State<MainNavigationScreen> {
   int _currentIndex = 0;
 
-  // We keep track of the screens so they don't rebuild from scratch every tab switch
+  late final ApiService _api;
   late final List<Widget> _screens;
 
   @override
   void initState() {
     super.initState();
+    _api = ApiService();
     _screens = [
-      const MapDashboardScreen(), // 0: Map
-      const AlertListScreen(
-        isEmbedded: true,
-      ), // 1: Alerts (We'll adapt it to not push full-screen)
+      MapDashboardScreen(api: _api),
+      AlertListScreen(isEmbedded: true, api: _api),
       const Scaffold(
         body: Center(
           child: Text(
@@ -34,9 +35,15 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             style: TextStyle(color: Colors.grey),
           ),
         ),
-      ), // 2: Safety/Guide
-      const SettingsScreen(isEmbedded: true), // 3: Profile (We'll adapt it too)
+      ),
+      const SettingsScreen(isEmbedded: true),
     ];
+  }
+
+  @override
+  void dispose() {
+    _api.disconnect();
+    super.dispose();
   }
 
   void _onItemTapped(int index) {
@@ -48,20 +55,18 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 300),
-        transitionBuilder: (Widget child, Animation<double> animation) {
-          return FadeTransition(opacity: animation, child: child);
-        },
-        child: _screens[_currentIndex],
+      body: IndexedStack(
+        index: _currentIndex,
+        children: _screens,
       ),
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
+          color: const Color(0xFF1B2333),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.05),
-              blurRadius: 20,
-              offset: const Offset(0, -5),
+              color: Colors.black.withValues(alpha: 0.3),
+              blurRadius: 10,
+              offset: const Offset(0, -2),
             ),
           ],
         ),
@@ -69,37 +74,28 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           currentIndex: _currentIndex,
           onTap: _onItemTapped,
           type: BottomNavigationBarType.fixed,
-          backgroundColor: Colors.white,
-          selectedItemColor: const Color(0xFFD32F2F),
-          unselectedItemColor: Colors.grey.shade400,
-          showUnselectedLabels: true,
-          selectedLabelStyle: const TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 11,
-          ),
-          unselectedLabelStyle: const TextStyle(fontSize: 11),
-          elevation: 0,
+          backgroundColor: const Color(0xFF1B2333),
+          selectedItemColor: const Color(0xFFE94B4B),
+          unselectedItemColor: Colors.grey,
+          selectedFontSize: 12,
+          unselectedFontSize: 10,
           items: const [
             BottomNavigationBarItem(
-              icon: Icon(Icons.map_outlined),
-              activeIcon: Icon(Icons.map),
-              label: 'Map',
-            ),
+                icon: Icon(Icons.map_outlined),
+                activeIcon: Icon(Icons.map),
+                label: 'Map'),
             BottomNavigationBarItem(
-              icon: Icon(Icons.notifications_none),
-              activeIcon: Icon(Icons.notifications),
-              label: 'Alerts',
-            ),
+                icon: Icon(Icons.notifications_outlined),
+                activeIcon: Icon(Icons.notifications),
+                label: 'Alerts'),
             BottomNavigationBarItem(
-              icon: Icon(Icons.menu_book_outlined),
-              activeIcon: Icon(Icons.menu_book),
-              label: 'Guide',
-            ),
+                icon: Icon(Icons.shield_outlined),
+                activeIcon: Icon(Icons.shield),
+                label: 'Safety'),
             BottomNavigationBarItem(
-              icon: Icon(Icons.person_outline),
-              activeIcon: Icon(Icons.person),
-              label: 'Profile',
-            ),
+                icon: Icon(Icons.person_outline),
+                activeIcon: Icon(Icons.person),
+                label: 'Profile'),
           ],
         ),
       ),
@@ -107,528 +103,559 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 }
 
+// ================================================================
+//  MAP DASHBOARD (OpenStreetMap via flutter_map)
+// ================================================================
+
 class MapDashboardScreen extends StatefulWidget {
-  const MapDashboardScreen({super.key});
+  final ApiService api;
+  const MapDashboardScreen({super.key, required this.api});
 
   @override
   State<MapDashboardScreen> createState() => _MapDashboardScreenState();
 }
 
-class _MapDashboardScreenState extends State<MapDashboardScreen>
-    with TickerProviderStateMixin {
-  GoogleMapController? _mapController;
-
-  // Fake stream controller to simulate firebase for the UI layout requests.
-  final StreamController<String> _mockStreamController =
-      StreamController<String>.broadcast();
-
+class _MapDashboardScreenState extends State<MapDashboardScreen> {
+  // Alert state
   bool _isFireDetected = false;
+  bool _isFloodDetected = false;
+  String _currentThreatLevel = 'safe';
+  String _alertTitle = '';
+  String _alertMessage = '';
   bool _hasPushedAlert = false;
 
-  late AnimationController _pulseController;
-  late Animation<double> _pulseAnimation;
+  StreamSubscription? _wsSub;
+  final MapController _mapController = MapController();
 
-  static const LatLng _box1Location = LatLng(11.6854, 76.1320);
-  static const LatLng _userLocation = LatLng(11.6800, 76.1300);
-  static const LatLng _safeExit = LatLng(11.6700, 76.1200);
+  // Sensor positions from backend
+  List<Map<String, dynamic>> _positions = [];
+
+  // Latest sensor values
+  final Map<String, Map<String, dynamic>> _latestValues = {};
+
+  // Evacuation route data
+  Map<String, dynamic>? _evacuationRoute;
+
+  // Default center
+  static const LatLng _defaultCenter = LatLng(11.6854, 76.1320);
 
   @override
   void initState() {
     super.initState();
 
-    _pulseController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1500),
-    )..repeat(reverse: true);
+    // Connect WebSocket
+    widget.api.connectWebSocket();
+    _wsSub = widget.api.sensorStream.listen(_onSensorData);
 
-    _pulseAnimation = Tween(begin: 0.1, end: 0.4).animate(
-      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
-    );
-
-    _mockStreamController.stream.listen((status) {
-      _handleStatusUpdate(status);
-    });
+    // Load sensor positions
+    _loadPositions();
   }
 
-  void _handleStatusUpdate(String status) {
-    if (!mounted) return;
-
-    if (status == "FIRE_DETECTED") {
-      setState(() {
-        _isFireDetected = true;
-      });
-
-      if (!_hasPushedAlert) {
-        _hasPushedAlert = true;
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) =>
-                const RedAlertScreen(location: "ZONE ALPHA (BOX 1)"),
-          ),
-        ).then((_) {
-          _hasPushedAlert = false;
-        });
-      }
-    } else {
-      setState(() {
-        _isFireDetected = false;
-      });
+  Future<void> _loadPositions() async {
+    final pos = await widget.api.fetchPositions();
+    if (mounted && pos.isNotEmpty) {
+      setState(() => _positions = pos);
     }
   }
 
-  void _simulateFire() {
-    _mockStreamController.add("FIRE_DETECTED");
+  void _onSensorData(Map<String, dynamic> data) {
+    if (!mounted) return;
+
+    final sensor = data['sensor'] as String? ?? '';
+    final threatLevel = data['threat_level'] as String? ?? 'safe';
+    final alert = data['alert'] as Map<String, dynamic>?;
+
+    _latestValues[sensor] = data;
+
+    setState(() {
+      _currentThreatLevel = threatLevel;
+
+      if (threatLevel == 'critical') {
+        if (sensor == 'gas-leakage' || sensor == 'temperature') {
+          _isFireDetected = true;
+          _isFloodDetected = false;
+          _alertTitle = alert?['title'] ?? 'Hazard Alert';
+          _alertMessage = alert?['message'] ?? '';
+
+          if (!_hasPushedAlert) {
+            _hasPushedAlert = true;
+            _fetchEvacuationRoute(sensor);
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) =>
+                    RedAlertScreen(location: _getLocationForSensor(sensor)),
+              ),
+            ).then((_) {
+              _hasPushedAlert = false;
+            });
+          }
+        } else if (sensor == 'ultrasonic' || sensor == 'humidity') {
+          _isFloodDetected = true;
+          _isFireDetected = false;
+          _alertTitle = alert?['title'] ?? 'Flood Warning';
+          _alertMessage = alert?['message'] ?? '';
+
+          if (!_hasPushedAlert) {
+            _hasPushedAlert = true;
+            _fetchEvacuationRoute(sensor);
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => FlashFloodWarningScreen(
+                  location: _getLocationForSensor(sensor),
+                ),
+              ),
+            ).then((_) {
+              _hasPushedAlert = false;
+            });
+          }
+        }
+      } else if (threatLevel == 'warning') {
+        _alertTitle = alert?['title'] ?? 'Warning';
+        _alertMessage = alert?['message'] ?? '';
+        // Clear critical-only state (red zone + evacuation)
+        if (sensor == 'gas-leakage' || sensor == 'temperature') {
+          _isFireDetected = false;
+        }
+        if (sensor == 'ultrasonic' || sensor == 'humidity') {
+          _isFloodDetected = false;
+        }
+        _evacuationRoute = null;
+      } else {
+        if (sensor == 'gas-leakage' || sensor == 'temperature') {
+          _isFireDetected = false;
+        }
+        if (sensor == 'ultrasonic' || sensor == 'humidity') {
+          _isFloodDetected = false;
+        }
+        _evacuationRoute = null;
+      }
+    });
   }
 
-  void _simulateSafe() {
-    _mockStreamController.add("SAFE");
+  String _getLocationForSensor(String sensorType) {
+    final pos = _positions.where((p) => p['sensor_type'] == sensorType);
+    if (pos.isNotEmpty) {
+      return pos.first['name'] ?? 'Sensor Location';
+    }
+    return 'Unknown Location';
+  }
+
+  Future<void> _fetchEvacuationRoute(String sensorType) async {
+    final pos = _positions.where((p) => p['sensor_type'] == sensorType);
+    if (pos.isEmpty) return;
+
+    final dangerLat = (pos.first['lat'] as num).toDouble();
+    final dangerLng = (pos.first['lng'] as num).toDouble();
+
+    final route = await widget.api.fetchEvacuationRoute(dangerLat, dangerLng);
+    if (route == null || !mounted) return;
+
+    setState(() {
+      _evacuationRoute = route;
+    });
   }
 
   @override
   void dispose() {
-    _mockStreamController.close();
-    _mapController?.dispose();
-    _pulseController.dispose();
+    _wsSub?.cancel();
     super.dispose();
+  }
+
+  // Build marker list
+  List<Marker> _buildMarkers() {
+    final markers = <Marker>[];
+
+    for (final p in _positions) {
+      final lat = (p['lat'] as num).toDouble();
+      final lng = (p['lng'] as num).toDouble();
+      final type = p['sensor_type'] as String? ?? '';
+      final name = p['name'] as String? ?? 'Sensor';
+      final lv = _latestValues[type];
+      final value = lv != null ? '${lv['value']}' : 'No data';
+
+      bool isThreat = (type == 'gas-leakage' || type == 'temperature') &&
+              _isFireDetected ||
+          (type == 'ultrasonic' || type == 'humidity') && _isFloodDetected;
+
+      markers.add(Marker(
+        point: LatLng(lat, lng),
+        width: 40,
+        height: 40,
+        child: GestureDetector(
+          onTap: () {
+            _showSensorInfo(name, type, value);
+          },
+          child: Icon(
+            _getSensorIcon(type),
+            color: isThreat ? Colors.red : const Color(0xFF3fb950),
+            size: 32,
+          ),
+        ),
+      ));
+    }
+
+    // Safe exit marker from evacuation route
+    if (_evacuationRoute != null) {
+      final exitPt = _evacuationRoute!['safe_exit'];
+      final exitLat = (exitPt['lat'] as num).toDouble();
+      final exitLng = (exitPt['lng'] as num).toDouble();
+
+      markers.add(Marker(
+        point: LatLng(exitLat, exitLng),
+        width: 150,
+        height: 40,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: Colors.green,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.white, width: 2),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.3),
+                blurRadius: 6,
+              ),
+            ],
+          ),
+          child: Text(
+            'SAFE EXIT ${exitPt['distance_m']}m',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ),
+      ));
+    }
+
+    return markers;
+  }
+
+  IconData _getSensorIcon(String type) {
+    switch (type) {
+      case 'gas-leakage':
+        return Icons.local_fire_department;
+      case 'ultrasonic':
+        return Icons.water;
+      case 'temperature':
+        return Icons.thermostat;
+      case 'humidity':
+        return Icons.water_drop;
+      default:
+        return Icons.sensors;
+    }
+  }
+
+  void _showSensorInfo(String name, String type, String value) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1B2333),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(name,
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Text('Type: $type',
+                style: TextStyle(color: Colors.grey[400], fontSize: 14)),
+            const SizedBox(height: 4),
+            Text('Value: $value',
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w800)),
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Build danger zone circles based on per-sensor threat level
+  List<CircleMarker> _buildCircles() {
+    final circles = <CircleMarker>[];
+
+    for (final p in _positions) {
+      final type = p['sensor_type'] as String? ?? '';
+      final lat = (p['lat'] as num).toDouble();
+      final lng = (p['lng'] as num).toDouble();
+
+      // Get this sensor's threat level
+      final lv = _latestValues[type];
+      final threat = lv?['threat_level'] ?? 'safe';
+      if (threat == 'safe') continue; // no zone for safe
+
+      Color zoneColor;
+      double radius;
+      double opacity;
+
+      if (threat == 'critical') {
+        // Red zone for gas/temp, blue zone for water/humidity
+        zoneColor = (type == 'gas-leakage' || type == 'temperature')
+            ? Colors.red
+            : Colors.blue;
+        radius = 500;
+        opacity = 0.25;
+      } else {
+        // Yellow zone for gas/temp warning, light blue for water/humidity warning
+        zoneColor = (type == 'gas-leakage' || type == 'temperature')
+            ? Colors.orange
+            : Colors.lightBlue;
+        radius = 300;
+        opacity = 0.15;
+      }
+
+      circles.add(CircleMarker(
+        point: LatLng(lat, lng),
+        radius: radius,
+        useRadiusInMeter: true,
+        color: zoneColor.withValues(alpha: opacity),
+        borderColor: zoneColor,
+        borderStrokeWidth: 2,
+      ));
+    }
+
+    return circles;
+  }
+
+  // Build evacuation route polylines
+  List<Polyline> _buildPolylines() {
+    final polylines = <Polyline>[];
+
+    if (_evacuationRoute != null) {
+      // Safe route (green)
+      final safeRoute = (_evacuationRoute!['safe_route'] as List)
+          .map((pt) =>
+              LatLng((pt[0] as num).toDouble(), (pt[1] as num).toDouble()))
+          .toList();
+
+      polylines.add(Polyline(
+        points: safeRoute,
+        color: Colors.green,
+        strokeWidth: 5,
+      ));
+
+      // Blocked route (red dashed)
+      final blockedRoute = (_evacuationRoute!['blocked_route'] as List)
+          .map((pt) =>
+              LatLng((pt[0] as num).toDouble(), (pt[1] as num).toDouble()))
+          .toList();
+
+      polylines.add(Polyline(
+        points: blockedRoute,
+        color: Colors.red,
+        strokeWidth: 4,
+      ));
+    }
+
+    return polylines;
   }
 
   @override
   Widget build(BuildContext context) {
-    final Set<Marker> markers = {
-      Marker(
-        markerId: const MarkerId("user"),
-        position: _userLocation,
-        infoWindow: const InfoWindow(title: "You are here"),
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
-      ),
-      Marker(
-        markerId: const MarkerId("box_1"),
-        position: _box1Location,
-        infoWindow: const InfoWindow(title: "Sentinel Node 1"),
-        icon: BitmapDescriptor.defaultMarkerWithHue(
-          _isFireDetected ? BitmapDescriptor.hueRed : BitmapDescriptor.hueGreen,
-        ),
-      ),
-    };
+    bool hasActiveAlert = _isFireDetected || _isFloodDetected;
+    final center = _positions.isNotEmpty
+        ? LatLng(
+            (_positions.first['lat'] as num).toDouble(),
+            (_positions.first['lng'] as num).toDouble(),
+          )
+        : _defaultCenter;
 
     return Scaffold(
       body: Stack(
         children: [
-          GoogleMap(
-            initialCameraPosition: const CameraPosition(
-              target: _userLocation,
-              zoom: 14.0,
+          // OpenStreetMap
+          FlutterMap(
+            mapController: _mapController,
+            options: MapOptions(
+              initialCenter: center,
+              initialZoom: 14.0,
             ),
-            markers: markers,
-            circles: _isFireDetected
-                ? {
-                    Circle(
-                      circleId: const CircleId('danger_zone_static'),
-                      center: _box1Location,
-                      radius: 500,
-                      fillColor: Colors.red.withOpacity(0.2),
-                      strokeColor: Colors.red,
-                      strokeWidth: 2,
-                    ),
-                    Circle(
-                      circleId: const CircleId('danger_zone_pulse'),
-                      center: _box1Location,
-                      radius: 500,
-                      // ignore: deprecated_member_use
-                      fillColor: Colors.red.withOpacity(_pulseAnimation.value),
-                      strokeColor: Colors.transparent,
-                      strokeWidth: 0,
-                    ),
-                  }
-                : {},
-            polylines: {
-              if (!_isFireDetected)
-                Polyline(
-                  polylineId: const PolylineId("primary_route"),
-                  points: const [_userLocation, _box1Location, _safeExit],
-                  color: Colors.blue,
-                  width: 5,
-                )
-              else ...[
-                Polyline(
-                  polylineId: const PolylineId("blocked_route"),
-                  points: const [_userLocation, _box1Location, _safeExit],
-                  color: Colors.red.withOpacity(0.5),
-                  width: 3,
-                  patterns: [PatternItem.dash(10), PatternItem.gap(10)],
-                ),
-                Polyline(
-                  polylineId: const PolylineId("safe_route"),
-                  points: const [
-                    _userLocation,
-                    LatLng(11.6750, 76.1400),
-                    _safeExit,
-                  ],
-                  color: Colors.green,
-                  width: 6,
-                ),
-              ],
-            },
-            myLocationEnabled: true,
-            myLocationButtonEnabled: false,
-            zoomControlsEnabled: false,
-            onMapCreated: (controller) => _mapController = controller,
+            children: [
+              TileLayer(
+                urlTemplate:
+                    'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                userAgentPackageName: 'com.example.aura_client',
+              ),
+              CircleLayer(circles: _buildCircles()),
+              PolylineLayer(polylines: _buildPolylines()),
+              MarkerLayer(markers: _buildMarkers()),
+            ],
           ),
 
-          SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 16.0,
-                vertical: 8.0,
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  AnimatedContainer(
-                    duration: const Duration(milliseconds: 300),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 10,
+          // Top alert banner
+          if (hasActiveAlert)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 8,
+              left: 16,
+              right: 16,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: _isFireDetected
+                      ? Colors.red.shade900
+                      : Colors.blue.shade900,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: (_isFireDetected ? Colors.red : Colors.blue)
+                          .withValues(alpha: 0.4),
+                      blurRadius: 12,
                     ),
-                    decoration: BoxDecoration(
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      _isFireDetected
+                          ? Icons.local_fire_department
+                          : Icons.flood,
                       color: Colors.white,
-                      borderRadius: BorderRadius.circular(24),
-                      boxShadow: [
-                        BoxShadow(
-                          color: _isFireDetected
-                              ? Colors.red.withOpacity(0.3)
-                              : Colors.black.withOpacity(0.05),
-                          blurRadius: 10,
-                        ),
-                      ],
+                      size: 28,
                     ),
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 8,
-                          height: 8,
-                          decoration: BoxDecoration(
-                            color: _isFireDetected ? Colors.red : Colors.green,
-                            shape: BoxShape.circle,
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _alertTitle,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          _isFireDetected ? 'CRITICAL ALERT' : 'SYSTEM SAFE',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 1,
-                            color: _isFireDetected ? Colors.red : Colors.black,
+                          Text(
+                            _alertMessage,
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.8),
+                              fontSize: 11,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+          // Sensor data cards at bottom
+          Positioned(
+            bottom: 0,
+            left: 0,
+            right: 0,
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1B2333),
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(20)),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.3),
+                    blurRadius: 10,
+                    offset: const Offset(0, -2),
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 40,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 12),
+                    decoration: BoxDecoration(
+                      color: Colors.grey[600],
+                      borderRadius: BorderRadius.circular(2),
                     ),
                   ),
                   Row(
                     children: [
-                      CircleAvatar(
-                        backgroundColor: Colors.white,
-                        child: Icon(
-                          Icons.notifications_none,
-                          color: Colors.grey.shade800,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      const CircleAvatar(
-                        backgroundImage: NetworkImage(
-                          'https://i.pravatar.cc/150?img=11',
-                        ),
-                      ),
+                      _sensorCard(
+                          'Temp', 'temperature', Icons.thermostat, 'C'),
+                      const SizedBox(width: 8),
+                      _sensorCard(
+                          'Humidity', 'humidity', Icons.water_drop, '%'),
+                      const SizedBox(width: 8),
+                      _sensorCard('Gas', 'gas-leakage',
+                          Icons.local_fire_department, 'ppm'),
+                      const SizedBox(width: 8),
+                      _sensorCard(
+                          'Water', 'ultrasonic', Icons.water, 'cm'),
                     ],
                   ),
                 ],
               ),
             ),
           ),
-
-          SafeArea(
-            child: Align(
-              alignment: Alignment.topRight,
-              child: Padding(
-                padding: const EdgeInsets.only(top: 80, right: 16),
-                child: Column(
-                  children: [
-                    FloatingActionButton.small(
-                      heroTag: 'sim1',
-                      onPressed: _simulateFire,
-                      backgroundColor: Colors.red,
-                      child: const Icon(Icons.fireplace, color: Colors.white),
-                    ),
-                    const SizedBox(height: 8),
-                    FloatingActionButton.small(
-                      heroTag: 'sim2',
-                      onPressed: _simulateSafe,
-                      backgroundColor: Colors.green,
-                      child: const Icon(
-                        Icons.check_circle,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-
-          Align(
-            alignment: Alignment.bottomCenter,
-            child: TweenAnimationBuilder<double>(
-              tween: Tween<double>(begin: 0, end: 1),
-              duration: const Duration(milliseconds: 500),
-              curve: Curves.easeOutCubic,
-              builder: (context, value, child) {
-                return Transform.translate(
-                  offset: Offset(0, 300 * (1 - value)),
-                  child: child,
-                );
-              },
-              child: Container(
-                height: 300,
-                decoration: const BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black12,
-                      blurRadius: 20,
-                      offset: Offset(0, -5),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  children: [
-                    const SizedBox(height: 12),
-                    Container(
-                      width: 40,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade300,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.all(24.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                'CURRENT STATUS',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.grey.shade500,
-                                  letterSpacing: 1.5,
-                                ),
-                              ),
-                              Text(
-                                'Updated live',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  color: Colors.grey.shade500,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              Container(
-                                width: 10,
-                                height: 10,
-                                decoration: BoxDecoration(
-                                  color: _isFireDetected
-                                      ? const Color(0xFFD32F2F)
-                                      : Colors.green,
-                                  shape: BoxShape.circle,
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              AnimatedDefaultTextStyle(
-                                duration: const Duration(milliseconds: 300),
-                                style: TextStyle(
-                                  fontSize: 24,
-                                  fontWeight: FontWeight.bold,
-                                  color: _isFireDetected
-                                      ? Colors.red
-                                      : Colors.black,
-                                ),
-                                child: Text(
-                                  _isFireDetected
-                                      ? 'Hazard Detected'
-                                      : 'All Clear',
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                    Expanded(
-                      child: AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 300),
-                        child: ListView(
-                          key: ValueKey<bool>(_isFireDetected),
-                          padding: const EdgeInsets.symmetric(horizontal: 24),
-                          children: [
-                            if (_isFireDetected)
-                              _buildMapAlertCard(
-                                icon: Icons.fireplace,
-                                iconColor: Colors.red,
-                                iconBg: Colors.red.shade50,
-                                title: 'Active Fire - Zone Alpha',
-                                badgeText: 'CRITICAL',
-                                badgeColor: Colors.red,
-                                description:
-                                    'Sensor network detected fire. Evacuation route recalculated.',
-                                time: 'Just now',
-                                source: 'Sentinel Node 1',
-                              )
-                            else ...[
-                              _buildMapAlertCard(
-                                icon: Icons.check_circle_outline,
-                                iconColor: Colors.green,
-                                iconBg: Colors.green.shade50,
-                                title: 'System Optimal',
-                                badgeText: 'STABLE',
-                                badgeColor: Colors.green,
-                                description:
-                                    'All 24 Sentinel Nodes are reporting safe environments.',
-                                time: 'Live',
-                                source: 'System',
-                              ),
-                              const SizedBox(height: 16),
-                              _buildMapAlertCard(
-                                icon: Icons.waves,
-                                iconColor: Colors.blue,
-                                iconBg: Colors.blue.shade50,
-                                title: 'Flash Flood Warning',
-                                badgeText: 'ADVISORY',
-                                badgeColor: Colors.orange,
-                                description:
-                                    'Heavy rainfall in nearby district. Monitor status.',
-                                time: '1h ago',
-                                source: 'IMD Kerala',
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
         ],
       ),
     );
   }
 
-  Widget _buildMapAlertCard({
-    required IconData icon,
-    required Color iconColor,
-    required Color iconBg,
-    required String title,
-    required String badgeText,
-    required Color badgeColor,
-    required String description,
-    required String time,
-    required String source,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(color: Colors.grey.shade200),
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10),
-        ],
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(color: iconBg, shape: BoxShape.circle),
-            child: Icon(icon, color: iconColor, size: 24),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13,
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: badgeColor.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        badgeText,
-                        style: TextStyle(
-                          color: badgeColor,
-                          fontSize: 8,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  description,
-                  style: TextStyle(
-                    color: Colors.grey.shade600,
-                    fontSize: 12,
-                    height: 1.4,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Icon(
-                      Icons.access_time,
-                      size: 12,
-                      color: Colors.grey.shade400,
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      '$time  •  $source',
-                      style: TextStyle(
-                        color: Colors.grey.shade400,
-                        fontSize: 11,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
+  Widget _sensorCard(
+      String label, String sensorType, IconData icon, String unit) {
+    final lv = _latestValues[sensorType];
+    final value = lv != null ? (lv['value'] as num).toStringAsFixed(0) : '--';
+    final threatLevel = lv?['threat_level'] ?? 'safe';
+
+    Color cardColor;
+    if (threatLevel == 'critical') {
+      cardColor = Colors.red;
+    } else if (threatLevel == 'warning') {
+      cardColor = Colors.orange;
+    } else {
+      cardColor = const Color(0xFF3fb950);
+    }
+
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: cardColor.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: cardColor.withValues(alpha: 0.3)),
+        ),
+        child: Column(
+          children: [
+            Icon(icon, color: cardColor, size: 20),
+            const SizedBox(height: 4),
+            Text(
+              '$value$unit',
+              style: TextStyle(
+                color: cardColor,
+                fontWeight: FontWeight.bold,
+                fontSize: 14,
+              ),
             ),
-          ),
-        ],
+            Text(
+              label,
+              style: TextStyle(
+                color: Colors.grey[400],
+                fontSize: 10,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

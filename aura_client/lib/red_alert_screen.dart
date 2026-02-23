@@ -48,19 +48,14 @@ class _RedAlertScreenState extends State<RedAlertScreen>
       });
     }
 
-    // Play loud siren
-    await _audioPlayer.setReleaseMode(ReleaseMode.loop);
-    // Assuming you drop a siren.mp3 in assets. For now, use a fallback audio url or just fail gracefully
+    // Audio alert - disabled for emulator compatibility
+    // Vibration pattern is still active above
     try {
-      // You should add 'assets/sounds/siren.mp3' in pubspec.yaml
-      // We will attempt to play a network URL as a fallback for the hackathon
-      await _audioPlayer.play(
-        UrlSource(
-          'https://freesound.org/data/previews/332/332450_5584511-lq.mp3',
-        ),
-      );
+      await _audioPlayer.setReleaseMode(ReleaseMode.loop);
+      // Uncomment below for real device with local asset:
+      // await _audioPlayer.play(AssetSource('sounds/siren.mp3'));
     } catch (e) {
-      debugPrint("Could not play audio: $e");
+      debugPrint("Audio init skipped: $e");
     }
   }
 

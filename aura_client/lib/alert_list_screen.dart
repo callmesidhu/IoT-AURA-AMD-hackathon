@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'api_service.dart';
 
 class AlertListScreen extends StatelessWidget {
   final bool isEmbedded;
-  const AlertListScreen({super.key, this.isEmbedded = false});
+  final ApiService? api;
+  const AlertListScreen({super.key, this.isEmbedded = false, this.api});
 
   @override
   Widget build(BuildContext context) {

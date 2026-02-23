@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "552157419898",
+    "project_id": "portfolio-ef517",
+    "storage_bucket": "portfolio-ef517.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:552157419898:android:75ea47e968597465911ec3",
+        "android_client_info": {
+          "package_name": "com.example.aura_client"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAJWqTDlrORRhOWnzCm04frip5dHvZer4M"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
