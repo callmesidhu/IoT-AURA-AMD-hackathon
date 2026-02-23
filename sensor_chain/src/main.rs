@@ -3,12 +3,12 @@ use sha2::{Sha256, Digest};
 
 fn calculate_hash(
     id: i32,
-    name: &str,
+    name: &String,
     lat: f64,
     lng: f64,
-    sensor_type: &str,
-    created_at: &str,
-    previous_hash: &str
+    sensor_type: &String,
+    created_at: &String,
+    previous_hash: &String
 ) -> String {
 
     let mut hasher = Sha256::new();
@@ -16,12 +16,13 @@ fn calculate_hash(
         "{}{}{}{}{}{}{}",
         id, name, lat, lng, sensor_type, created_at, previous_hash
     ));
+
     format!("{:x}", hasher.finalize())
 }
 
 fn main() -> Result<()> {
 
-    let conn = Connection::open("sqlite.db")?;
+    let conn = Connection::open("../sqlite.db")?;
 
     let mut stmt = conn.prepare(
         "SELECT id, name, lat, lng, sensor_type, created_at FROM sensor_positions ORDER BY id"
@@ -38,7 +39,7 @@ fn main() -> Result<()> {
         ))
     })?;
 
-    let mut previous_hash = "0".to_string();
+    let mut previous_hash = String::from("0");
 
     for row in rows {
         let (id, name, lat, lng, sensor_type, created_at) = row?;
