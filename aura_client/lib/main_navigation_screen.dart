@@ -143,8 +143,21 @@ class _MapDashboardScreenState extends State<MapDashboardScreen> {
     widget.api.connectWebSocket();
     _wsSub = widget.api.sensorStream.listen(_onSensorData);
 
-    // Load sensor positions
+    // Load static positions and initial values
     _loadPositions();
+    _loadInitialValues();
+  }
+
+  Future<void> _loadInitialValues() async {
+    final data = await widget.api.fetchInitialSensorData();
+    if (mounted && data.isNotEmpty) {
+      setState(() {
+        for (var i in data) {
+          final sensor = i['sensor'] as String? ?? '';
+          if (sensor.isNotEmpty) _latestValues[sensor] = i;
+        }
+      });
+    }
   }
 
   Future<void> _loadPositions() async {
@@ -669,116 +682,136 @@ class _MapDashboardScreenState extends State<MapDashboardScreen> {
               ),
             ),
 
-          // Sensor data cards at bottom
-          Positioned(
-            bottom: 0,
-            left: 0,
-            right: 0,
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-              decoration: BoxDecoration(
-                color: const Color(0xFF1B2333),
-                borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(20),
+          // Live Sensors Sidebar (Mobile Bottom Sheet variation)
+          DraggableScrollableSheet(
+            initialChildSize: 0.35,
+            minChildSize: 0.1,
+            maxChildSize: 0.8,
+            builder: (context, scrollController) {
+              return Container(
+                decoration: BoxDecoration(
+                  color: const Color(0xFF161b22), // GitHub dark dim background
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                  boxShadow: [
+                    BoxShadow(color: Colors.black.withValues(alpha: 0.5), blurRadius: 10, offset: const Offset(0, -2)),
+                  ],
                 ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.3),
-                    blurRadius: 10,
-                    offset: const Offset(0, -2),
-                  ),
-                ],
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 40,
-                    height: 4,
-                    margin: const EdgeInsets.only(bottom: 12),
-                    decoration: BoxDecoration(
-                      color: Colors.grey[600],
-                      borderRadius: BorderRadius.circular(2),
+                child: Column(
+                  children: [
+                    // Drag Handle
+                    Container(
+                      width: 40,
+                      height: 4,
+                      margin: const EdgeInsets.only(top: 12, bottom: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.grey[600],
+                        borderRadius: BorderRadius.circular(2),
+                      ),
                     ),
-                  ),
-                  Row(
-                    children: [
-                      _sensorCard('Temp', 'temperature', Icons.thermostat, 'C'),
-                      const SizedBox(width: 8),
-                      _sensorCard(
-                        'Humidity',
-                        'humidity',
-                        Icons.water_drop,
-                        '%',
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                      child: Row(
+                        children: [
+                          Text('LIVE SENSORS', style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 12, letterSpacing: 1.2)),
+                        ],
                       ),
-                      const SizedBox(width: 8),
-                      _sensorCard(
-                        'Gas',
-                        'gas-leakage',
-                        Icons.local_fire_department,
-                        'ppm',
-                      ),
-                      const SizedBox(width: 8),
-                      _sensorCard('Water', 'ultra-sonic', Icons.water, 'cm'),
-                    ],
-                  ),
-                ],
-              ),
-            ),
+                    ),
+                    const Divider(color: Color(0xFF30363d), height: 1),
+                    Expanded(
+                      child: _positions.isEmpty
+                          ? const Center(child: Text('No sensors found on map.', style: TextStyle(color: Colors.grey)))
+                          : ListView.builder(
+                              controller: scrollController,
+                              padding: const EdgeInsets.only(top: 8, bottom: 20),
+                              itemCount: _positions.length,
+                              itemBuilder: (context, index) {
+                                final p = _positions[index];
+                                final type = p['sensor_type'] as String? ?? '';
+                                final name = p['name'] as String? ?? 'Sensor';
+                                return _buildSensorListTile(name, type);
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              );
+            },
           ),
         ],
       ),
     );
   }
 
-  Widget _sensorCard(
-    String label,
-    String sensorType,
-    IconData icon,
-    String unit,
-  ) {
+  Widget _buildSensorListTile(String name, String sensorType) {
     final lv = _latestValues[sensorType];
     final rawVal = lv?['value'] as num?;
-    final value = rawVal != null ? rawVal.toStringAsFixed(0) : '--';
-    final status = rawVal != null
-        ? _calculateStatus(sensorType, rawVal.toDouble())
-        : 'normal';
+    final value = rawVal != null ? rawVal.toStringAsFixed(2) : '--';
+    final status = rawVal != null ? _calculateStatus(sensorType, rawVal.toDouble()) : 'normal';
     final cardColor = _getStatusColor(status);
     final statusLabel = status.toUpperCase();
+    final unit = _sensorUnits[sensorType] ?? '';
 
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: cardColor.withValues(alpha: 0.15),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: cardColor.withValues(alpha: 0.3)),
-        ),
-        child: Column(
-          children: [
-            Icon(icon, color: cardColor, size: 20),
-            const SizedBox(height: 4),
-            Text(
-              '$value$unit',
-              style: TextStyle(
-                color: cardColor,
-                fontWeight: FontWeight.bold,
-                fontSize: 14,
+    // Parse timestamp if available
+    String timeStr = 'No data';
+    if (lv != null && lv['timestamp'] != null) {
+      try {
+        final dt = DateTime.parse(lv['timestamp']).toLocal();
+        timeStr = '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}:${dt.second.toString().padLeft(2, '0')}';
+      } catch (_) {}
+    }
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0d1117), // Darker card background
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFF30363d)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: cardColor.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: cardColor.withValues(alpha: 0.5)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(sensorType.toUpperCase(), style: TextStyle(color: cardColor, fontSize: 10, fontWeight: FontWeight.bold)),
+                    const SizedBox(width: 4),
+                    Icon(status == 'normal' ? Icons.check : Icons.close, color: cardColor, size: 12),
+                  ],
+                ),
               ),
-            ),
-            Text(label, style: TextStyle(color: Colors.grey[400], fontSize: 10)),
-            const SizedBox(height: 2),
-            Text(
-              statusLabel,
-              style: TextStyle(
-                color: cardColor,
-                fontWeight: FontWeight.w700,
-                fontSize: 8,
-                letterSpacing: 0.5,
-              ),
-            ),
-          ],
-        ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(value, style: TextStyle(color: cardColor, fontSize: 24, fontWeight: FontWeight.bold)),
+              if (unit.isNotEmpty) ...[
+                const SizedBox(width: 4),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(unit, style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                ),
+              ],
+              const Spacer(),
+              Text(timeStr, style: const TextStyle(color: Colors.grey, fontSize: 12)),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(statusLabel, style: TextStyle(color: cardColor, fontWeight: FontWeight.bold, fontSize: 10, letterSpacing: 1.0)),
+        ],
       ),
     );
   }

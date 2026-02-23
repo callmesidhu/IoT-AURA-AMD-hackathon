@@ -235,14 +235,22 @@ async def websocket_endpoint(websocket: WebSocket):
 # Sensor Endpoints (Arduino POSTs here)
 # ----------------------------
 
+latest_sensor_data = {}  # In-memory store for latest readings per sensor
+
 async def process_sensor(sensor_name: str, value: float):
     payload = {
         "sensor": sensor_name,
         "value": value,
         "timestamp": datetime.utcnow().isoformat()
     }
+    latest_sensor_data[sensor_name] = payload
     print(payload)
     await manager.broadcast(payload)  # push to all WebSocket clients (map)
+
+
+@app.get("/api/sensor-data")
+async def get_sensor_data():
+    return list(latest_sensor_data.values())
 
 
 @app.post("/sensor/temperature")

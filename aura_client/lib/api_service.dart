@@ -141,6 +141,20 @@ class ApiService {
     return [];
   }
 
+  /// Fetch initial sensor data from the backend
+  Future<List<Map<String, dynamic>>> fetchInitialSensorData() async {
+    try {
+      final response = await http.get(Uri.parse('$_baseUrl/api/sensor-data'));
+      if (response.statusCode == 200) {
+        final list = jsonDecode(response.body) as List;
+        return list.cast<Map<String, dynamic>>();
+      }
+    } catch (e) {
+      debugPrint('Fetch initial sensor data error: $e');
+    }
+    return [];
+  }
+
   /// Fetch all alerts (including historical safe ones)
   Future<List<Map<String, dynamic>>> fetchAllAlerts({int limit = 20}) async {
     try {
