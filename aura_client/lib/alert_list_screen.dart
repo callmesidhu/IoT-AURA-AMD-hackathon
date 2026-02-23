@@ -1,10 +1,79 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'api_service.dart';
 
-class AlertListScreen extends StatelessWidget {
+class AlertListScreen extends StatefulWidget {
   final bool isEmbedded;
   final ApiService? api;
   const AlertListScreen({super.key, this.isEmbedded = false, this.api});
+
+  @override
+  State<AlertListScreen> createState() => _AlertListScreenState();
+}
+
+class _AlertListScreenState extends State<AlertListScreen> {
+  List<Map<String, dynamic>> _alerts = [];
+  bool _isLoading = true;
+  StreamSubscription? _wsSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAlerts();
+    _subscribeToStream();
+  }
+
+  Future<void> _loadAlerts() async {
+    if (widget.api == null) {
+      if (mounted) setState(() => _isLoading = false);
+      return;
+    }
+    
+    setState(() => _isLoading = true);
+    final alerts = await widget.api!.fetchAllAlerts();
+    if (mounted) {
+      setState(() {
+        _alerts = alerts;
+        _isLoading = false;
+      });
+    }
+  }
+
+  void _subscribeToStream() {
+    if (widget.api == null) return;
+    
+    _wsSub = widget.api!.sensorStream.listen((data) {
+      if (!mounted) return;
+      
+      final threatLevel = data['threat_level'] as String? ?? 'safe';
+      final alertData = data['alert'] as Map<String, dynamic>?;
+      
+      if (alertData != null && (threatLevel == 'critical' || threatLevel == 'warning')) {
+        setState(() {
+          // Add to beginning of the list
+          _alerts.insert(0, {
+            'id': DateTime.now().millisecondsSinceEpoch,
+            'title': alertData['title'] ?? 'New Alert',
+            'severity': threatLevel,
+            'description': alertData['message'] ?? '',
+            'created_at': DateTime.now().toUtc().toIso8601String(),
+            'sensor_type': data['sensor'] ?? 'unknown',
+          });
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _wsSub?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _handleRefresh() async {
+    await _loadAlerts();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -88,87 +157,37 @@ class AlertListScreen extends StatelessWidget {
 
             // Alerts List
             Expanded(
-              child: ListView(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                children: [
-                  _buildSectionDivider('LIVE'),
-                  const SizedBox(height: 16),
-
-                  _buildFeedCard(
-                    icon: Icons.water_drop_outlined,
-                    iconColor: Colors.redAccent,
-                    badgeText: 'High Priority',
-                    badgeColor: Colors.redAccent,
-                    title: 'Flash Flood Warning',
-                    location: 'Meppadi Region, Wayanad',
-                    description:
-                        'Rapid water level rise detected in lower catchment areas. Evacuation protocols...',
-                    time: '10:42 AM',
-                    timeAgo: '2m ago',
-                    actionText: 'Details →',
-                    actionColor: const Color(0xFF4C3EE8),
-                  ),
-
-                  _buildFeedCard(
-                    icon: Icons.local_fire_department_outlined,
-                    iconColor: Colors.orange,
-                    badgeText: 'Monitor',
-                    badgeColor: Colors.orange,
-                    title: 'Structural Fire Incident',
-                    location: 'Central District, Kochi',
-                    description:
-                        'Containment operations in progress at commercial complex. Traffic diversion activ...',
-                    time: '09:15 AM',
-                    timeAgo: '1h ago',
-                    actionText: 'Map View 🗺',
-                    actionColor: const Color(0xFF4C3EE8),
-                  ),
-
-                  _buildFeedCard(
-                    icon: Icons.landscape_outlined,
-                    iconColor: Colors.grey.shade600,
-                    badgeText: 'Advisory',
-                    badgeColor: Colors.grey.shade600,
-                    title: 'Geological Instability',
-                    location: 'High Range, Idukki',
-                    description:
-                        'Soil saturation levels critical along Munnar...',
-                    time: '06:30 AM',
-                    timeAgo: '3h ago',
-                    actionText: 'Details →',
-                    actionColor: const Color(0xFF4C3EE8),
-                  ),
-
-                  const SizedBox(height: 16),
-                  _buildSectionDivider('ARCHIVED'),
-                  const SizedBox(height: 16),
-
-                  // Archived Item
-                  Opacity(
-                    opacity: 0.6,
-                    child: _buildFeedCard(
-                      icon: Icons.cloud_off_outlined,
-                      iconColor: Colors.grey,
-                      badgeText: 'Resolved',
-                      badgeColor: Colors.grey,
-                      title: 'Coastal Weather Alert',
-                      location: 'Trivandrum Coast',
-                      description:
-                          'Atmospheric conditions stabilized. Fishing advisory withdrawn. Normalcy restored.',
-                      time: '04:20 PM',
-                      timeAgo: 'Yesterday',
-                      actionText: 'History ↺',
-                      actionColor: Colors.grey.shade600,
-                    ),
-                  ),
-                  const SizedBox(height: 40),
-                ],
+              child: RefreshIndicator(
+                onRefresh: _handleRefresh,
+                color: const Color(0xFF4C3EE8),
+                child: _isLoading 
+                  ? const Center(child: CircularProgressIndicator(color: Color(0xFF4C3EE8)))
+                  : _alerts.isEmpty
+                    ? ListView(
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
+                        children: const [
+                          Center(
+                            child: Text(
+                              'No recent alerts',
+                              style: TextStyle(color: Colors.grey, fontSize: 16),
+                            ),
+                          )
+                        ],
+                      )
+                    : ListView.builder(
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        itemCount: _alerts.length,
+                        itemBuilder: (context, index) {
+                          final alert = _alerts[index];
+                          return _buildDynamicFeedCard(alert);
+                        },
+                      ),
               ),
             ),
           ],
         ),
       ),
-      bottomNavigationBar: !isEmbedded
+      bottomNavigationBar: !widget.isEmbedded
           ? BottomNavigationBar(
               currentIndex: 0,
               type: BottomNavigationBarType.fixed,
@@ -236,21 +255,60 @@ class AlertListScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildSectionDivider(String title) {
-    return Row(
-      children: [
-        Text(
-          title,
-          style: TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.bold,
-            color: Colors.grey.shade500,
-            letterSpacing: 1.5,
-          ),
-        ),
-        const SizedBox(width: 16),
-        Expanded(child: Divider(color: Colors.grey.shade300)),
-      ],
+  Widget _buildDynamicFeedCard(Map<String, dynamic> alert) {
+    final severity = alert['severity']?.toString().toLowerCase() ?? 'info';
+    final type = alert['sensor_type']?.toString().toLowerCase() ?? 'unknown';
+    
+    // Style configurations based on severity
+    Color badgeColor = Colors.grey;
+    String badgeText = 'Notice';
+    if (severity == 'critical') {
+      badgeColor = Colors.redAccent;
+      badgeText = 'Critical';
+    } else if (severity == 'warning') {
+      badgeColor = Colors.orange;
+      badgeText = 'Warning';
+    }
+
+    // Icon associations
+    IconData icon = Icons.info_outline;
+    if (type.contains('gas') || type.contains('temp')) {
+      icon = Icons.local_fire_department_outlined;
+    } else if (type.contains('water') || type.contains('ultrasonic') || type.contains('humid')) {
+      icon = Icons.water_drop_outlined;
+    }
+
+    // Parse timestamp
+    String timeStr = '--:--';
+    String timeAgoStr = 'Just now';
+    if (alert['created_at'] != null) {
+      try {
+        final dt = DateTime.parse(alert['created_at']).toLocal();
+        timeStr = DateFormat.jm().format(dt);
+        
+        final diff = DateTime.now().difference(dt);
+        if (diff.inDays > 0) {
+          timeAgoStr = '${diff.inDays}d ago';
+        } else if (diff.inHours > 0) {
+          timeAgoStr = '${diff.inHours}h ago';
+        } else if (diff.inMinutes > 0) {
+          timeAgoStr = '${diff.inMinutes}m ago';
+        }
+      } catch (_) {}
+    }
+
+    return _buildFeedCard(
+      icon: icon,
+      iconColor: badgeColor,
+      badgeText: badgeText,
+      badgeColor: badgeColor,
+      title: alert['title'] ?? 'Alert',
+      location: 'Sensor Network', // Ideally provided by backend mapped data
+      description: alert['description'] ?? '',
+      time: timeStr,
+      timeAgo: timeAgoStr,
+      actionText: severity == 'critical' ? 'Evacuate →' : 'Details',
+      actionColor: severity == 'critical' ? Colors.redAccent : const Color(0xFF4C3EE8),
     );
   }
 

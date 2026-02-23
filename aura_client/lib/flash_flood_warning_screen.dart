@@ -2,7 +2,12 @@ import 'package:flutter/material.dart';
 
 class FlashFloodWarningScreen extends StatelessWidget {
   final String location;
-  const FlashFloodWarningScreen({super.key, this.location = 'Sensor Zone'});
+  final Map<String, dynamic>? alert;
+  const FlashFloodWarningScreen({
+    super.key,
+    this.location = 'Sensor Zone',
+    this.alert,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -35,9 +40,9 @@ class FlashFloodWarningScreen extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 24),
-            const Text(
-              'Flash Flood Warning',
-              style: TextStyle(
+            Text(
+              alert?['title'] ?? 'Emergency Warning',
+              style: const TextStyle(
                 fontSize: 28,
                 fontWeight: FontWeight.bold,
                 color: Color(0xFF1B2333),
@@ -217,7 +222,7 @@ class FlashFloodWarningScreen extends StatelessWidget {
                   child: _buildInfoCard(
                     Icons.access_time,
                     'Reported',
-                    '10:42 AM',
+                    'Just now',
                   ),
                 ),
                 const SizedBox(width: 16),
@@ -225,7 +230,7 @@ class FlashFloodWarningScreen extends StatelessWidget {
                   child: _buildInfoCard(
                     Icons.shield_outlined,
                     'Source',
-                    'KSDMA',
+                    alert?['sensor']?.toString().toUpperCase() ?? 'KSDMA',
                   ),
                 ),
               ],
@@ -242,7 +247,8 @@ class FlashFloodWarningScreen extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             Text(
-              'Heavy rainfall has caused rising water levels in the Periyar river basin. Immediate evacuation is required for low-lying areas. Landslide risk is elevated in the High Range sectors due to continuous precipitation.',
+              alert?['message'] ??
+                  'Critical hazard criteria met for this region. Immediate evacuation protocols are in effect. Follow local authority instructions immediately.',
               style: TextStyle(color: Colors.grey.shade700, height: 1.6),
             ),
             const SizedBox(height: 24),

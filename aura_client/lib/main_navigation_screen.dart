@@ -2,9 +2,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:vibration/vibration.dart';
 import 'red_alert_screen.dart';
 import 'flash_flood_warning_screen.dart';
 import 'alert_list_screen.dart';
+import 'guide_screen.dart';
 import 'settings_screen.dart';
 import 'api_service.dart';
 
@@ -28,15 +30,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     _screens = [
       MapDashboardScreen(api: _api),
       AlertListScreen(isEmbedded: true, api: _api),
-      const Scaffold(
-        body: Center(
-          child: Text(
-            "Guide Content (Coming Soon)",
-            style: TextStyle(color: Colors.grey),
-          ),
-        ),
-      ),
-      const SettingsScreen(isEmbedded: true),
+      GuideScreen(api: _api, isEmbedded: true),
+      SettingsScreen(isEmbedded: true, api: _api),
     ];
   }
 
@@ -55,10 +50,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: IndexedStack(
-        index: _currentIndex,
-        children: _screens,
-      ),
+      body: IndexedStack(index: _currentIndex, children: _screens),
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
           color: const Color(0xFF1B2333),
@@ -81,21 +73,25 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           unselectedFontSize: 10,
           items: const [
             BottomNavigationBarItem(
-                icon: Icon(Icons.map_outlined),
-                activeIcon: Icon(Icons.map),
-                label: 'Map'),
+              icon: Icon(Icons.map_outlined),
+              activeIcon: Icon(Icons.map),
+              label: 'Map',
+            ),
             BottomNavigationBarItem(
-                icon: Icon(Icons.notifications_outlined),
-                activeIcon: Icon(Icons.notifications),
-                label: 'Alerts'),
+              icon: Icon(Icons.notifications_outlined),
+              activeIcon: Icon(Icons.notifications),
+              label: 'Alerts',
+            ),
             BottomNavigationBarItem(
-                icon: Icon(Icons.shield_outlined),
-                activeIcon: Icon(Icons.shield),
-                label: 'Safety'),
+              icon: Icon(Icons.shield_outlined),
+              activeIcon: Icon(Icons.shield),
+              label: 'Safety',
+            ),
             BottomNavigationBarItem(
-                icon: Icon(Icons.person_outline),
-                activeIcon: Icon(Icons.person),
-                label: 'Profile'),
+              icon: Icon(Icons.person_outline),
+              activeIcon: Icon(Icons.person),
+              label: 'Profile',
+            ),
           ],
         ),
       ),
@@ -171,11 +167,18 @@ class _MapDashboardScreenState extends State<MapDashboardScreen> {
       _currentThreatLevel = threatLevel;
 
       if (threatLevel == 'critical') {
-        if (sensor == 'gas-leakage' || sensor == 'temperature') {
+        // Trigger vibration on critical threats
+        Vibration.hasVibrator().then((has) {
+          if (has == true) {
+            Vibration.vibrate(pattern: [0, 500, 200, 500, 200, 500]);
+          }
+        });
+
+        if (sensor == 'gas-leakage' || sensor == 'temperature' || sensor == 'camera') {
           _isFireDetected = true;
           _isFloodDetected = false;
-          _alertTitle = alert?['title'] ?? 'Hazard Alert';
-          _alertMessage = alert?['message'] ?? '';
+          _alertTitle = alert?['title'] ?? 'HAZARD ALERT';
+          _alertMessage = alert?['message'] ?? 'Critical sensor threshold exceeded.';
 
           if (!_hasPushedAlert) {
             _hasPushedAlert = true;
@@ -184,17 +187,17 @@ class _MapDashboardScreenState extends State<MapDashboardScreen> {
               context,
               MaterialPageRoute(
                 builder: (context) =>
-                    RedAlertScreen(location: _getLocationForSensor(sensor)),
+                    RedAlertScreen(location: _getLocationForSensor(sensor), alert: alert),
               ),
             ).then((_) {
               _hasPushedAlert = false;
             });
           }
-        } else if (sensor == 'ultrasonic' || sensor == 'humidity') {
+        } else if (sensor == 'ultra-sonic' || sensor == 'humidity') {
           _isFloodDetected = true;
           _isFireDetected = false;
-          _alertTitle = alert?['title'] ?? 'Flood Warning';
-          _alertMessage = alert?['message'] ?? '';
+          _alertTitle = alert?['title'] ?? 'FLOOD WARNING';
+          _alertMessage = alert?['message'] ?? 'Critical water level detected.';
 
           if (!_hasPushedAlert) {
             _hasPushedAlert = true;
@@ -204,6 +207,7 @@ class _MapDashboardScreenState extends State<MapDashboardScreen> {
               MaterialPageRoute(
                 builder: (context) => FlashFloodWarningScreen(
                   location: _getLocationForSensor(sensor),
+                  alert: alert,
                 ),
               ),
             ).then((_) {
@@ -213,23 +217,26 @@ class _MapDashboardScreenState extends State<MapDashboardScreen> {
         }
       } else if (threatLevel == 'warning') {
         _alertTitle = alert?['title'] ?? 'Warning';
-        _alertMessage = alert?['message'] ?? '';
-        // Clear critical-only state (red zone + evacuation)
-        if (sensor == 'gas-leakage' || sensor == 'temperature') {
+        _alertMessage = alert?['message'] ?? 'Sensor value in warning range.';
+        // Clear critical states and evacuation route on downgrade
+        if (sensor == 'gas-leakage' || sensor == 'temperature' || sensor == 'camera') {
           _isFireDetected = false;
         }
-        if (sensor == 'ultrasonic' || sensor == 'humidity') {
+        if (sensor == 'ultra-sonic' || sensor == 'humidity') {
           _isFloodDetected = false;
         }
         _evacuationRoute = null;
       } else {
-        if (sensor == 'gas-leakage' || sensor == 'temperature') {
+        // Safe — clear everything for this sensor category
+        if (sensor == 'gas-leakage' || sensor == 'temperature' || sensor == 'camera') {
           _isFireDetected = false;
         }
-        if (sensor == 'ultrasonic' || sensor == 'humidity') {
+        if (sensor == 'ultra-sonic' || sensor == 'humidity') {
           _isFloodDetected = false;
         }
         _evacuationRoute = null;
+        _alertTitle = '';
+        _alertMessage = '';
       }
     });
   }
@@ -263,7 +270,53 @@ class _MapDashboardScreenState extends State<MapDashboardScreen> {
     super.dispose();
   }
 
-  // Build marker list
+  // Per-sensor status calculation (mirrors web dashboard getStatus)
+  String _calculateStatus(String type, double value) {
+    if (type == 'temperature') {
+      if (value <= 30) return 'normal';
+      if (value <= 45) return 'warning';
+      return 'alert';
+    }
+    if (type == 'humidity') {
+      if (value <= 60) return 'normal';
+      if (value <= 85) return 'warning';
+      return 'alert';
+    }
+    if (type == 'gas-leakage') {
+      if (value <= 800) return 'normal';
+      if (value <= 1200) return 'warning';
+      return 'alert';
+    }
+    if (type == 'ultra-sonic' || type == 'ultrasonic') {
+      if (value < 25) return 'alert';
+      if (value < 50) return 'warning';
+      return 'normal';
+    }
+    if (type == 'camera') {
+      if (value > 6000) return 'alert';
+      if (value > 2000) return 'warning';
+      return 'normal';
+    }
+    return 'normal';
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status) {
+      case 'alert': return const Color(0xFFf85149);
+      case 'warning': return const Color(0xFFd29922);
+      default: return const Color(0xFF3fb950);
+    }
+  }
+
+  static const Map<String, String> _sensorUnits = {
+    'temperature': '°C',
+    'humidity': '%',
+    'gas-leakage': 'ppm',
+    'ultra-sonic': 'cm',
+    'camera': '',
+  };
+
+  // Build marker list — each marker colored by its own sensor value
   List<Marker> _buildMarkers() {
     final markers = <Marker>[];
 
@@ -273,63 +326,109 @@ class _MapDashboardScreenState extends State<MapDashboardScreen> {
       final type = p['sensor_type'] as String? ?? '';
       final name = p['name'] as String? ?? 'Sensor';
       final lv = _latestValues[type];
-      final value = lv != null ? '${lv['value']}' : 'No data';
+      final rawVal = lv?['value'] as num?;
+      final status = rawVal != null
+          ? _calculateStatus(type, rawVal.toDouble())
+          : 'normal';
+      final color = _getStatusColor(status);
+      final valueStr = rawVal != null
+          ? '${rawVal}${_sensorUnits[type] ?? ''}'
+          : 'No data';
 
-      bool isThreat = (type == 'gas-leakage' || type == 'temperature') &&
-              _isFireDetected ||
-          (type == 'ultrasonic' || type == 'humidity') && _isFloodDetected;
-
-      markers.add(Marker(
-        point: LatLng(lat, lng),
-        width: 40,
-        height: 40,
-        child: GestureDetector(
-          onTap: () {
-            _showSensorInfo(name, type, value);
-          },
-          child: Icon(
-            _getSensorIcon(type),
-            color: isThreat ? Colors.red : const Color(0xFF3fb950),
-            size: 32,
+      markers.add(
+        Marker(
+          point: LatLng(lat, lng),
+          width: 40,
+          height: 40,
+          child: GestureDetector(
+            onTap: () => _showSensorInfo(name, type, valueStr),
+            child: Icon(_getSensorIcon(type), color: color, size: 32),
           ),
         ),
-      ));
+      );
     }
 
-    // Safe exit marker from evacuation route
+    // Evacuation route markers
     if (_evacuationRoute != null) {
-      final exitPt = _evacuationRoute!['safe_exit'];
-      final exitLat = (exitPt['lat'] as num).toDouble();
-      final exitLng = (exitPt['lng'] as num).toDouble();
+      // Safe exit marker
+      if (_evacuationRoute!['safe_exit'] != null) {
+        final exitPt = _evacuationRoute!['safe_exit'];
+        final exitLat = (exitPt['lat'] as num).toDouble();
+        final exitLng = (exitPt['lng'] as num).toDouble();
+        final dist = exitPt['distance_m'] ?? '?';
+        final time = exitPt['estimated_time_min'] ?? '?';
 
-      markers.add(Marker(
-        point: LatLng(exitLat, exitLng),
-        width: 150,
-        height: 40,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            color: Colors.green,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.white, width: 2),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.3),
-                blurRadius: 6,
+        markers.add(
+          Marker(
+            point: LatLng(exitLat, exitLng),
+            width: 180,
+            height: 34,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: const Color(0xFF3fb950),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.white, width: 2),
+                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.3), blurRadius: 6)],
               ),
-            ],
-          ),
-          child: Text(
-            'SAFE EXIT ${exitPt['distance_m']}m',
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 10,
-              fontWeight: FontWeight.bold,
+              child: Text(
+                'SAFE EXIT (${dist}m / ${time} min)',
+                style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                textAlign: TextAlign.center,
+              ),
             ),
-            textAlign: TextAlign.center,
           ),
-        ),
-      ));
+        );
+      }
+
+      // User location marker
+      if (_evacuationRoute!['user_location'] != null) {
+        final userPt = _evacuationRoute!['user_location'];
+        markers.add(
+          Marker(
+            point: LatLng((userPt['lat'] as num).toDouble(), (userPt['lng'] as num).toDouble()),
+            width: 36,
+            height: 36,
+            child: Container(
+              decoration: BoxDecoration(
+                color: const Color(0xFF388bfd),
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 2),
+                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.4), blurRadius: 8)],
+              ),
+              child: const Center(
+                child: Text('YOU', style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
+              ),
+            ),
+          ),
+        );
+      }
+
+      // Blocked route X marker (midpoint of blocked route)
+      if (_evacuationRoute!['blocked_route'] != null) {
+        final blocked = _evacuationRoute!['blocked_route'] as List;
+        if (blocked.length > 1) {
+          final mid = blocked[1];
+          markers.add(
+            Marker(
+              point: LatLng((mid[0] as num).toDouble(), (mid[1] as num).toDouble()),
+              width: 28,
+              height: 28,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: const Color(0xFFf85149),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 2),
+                  boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.4), blurRadius: 8)],
+                ),
+                child: const Center(
+                  child: Text('X', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ),
+          );
+        }
+      }
     }
 
     return markers;
@@ -339,7 +438,7 @@ class _MapDashboardScreenState extends State<MapDashboardScreen> {
     switch (type) {
       case 'gas-leakage':
         return Icons.local_fire_department;
-      case 'ultrasonic':
+      case 'ultra-sonic':
         return Icons.water;
       case 'temperature':
         return Icons.thermostat;
@@ -363,20 +462,28 @@ class _MapDashboardScreenState extends State<MapDashboardScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(name,
-                style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold)),
+            Text(
+              name,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
             const SizedBox(height: 8),
-            Text('Type: $type',
-                style: TextStyle(color: Colors.grey[400], fontSize: 14)),
+            Text(
+              'Type: $type',
+              style: TextStyle(color: Colors.grey[400], fontSize: 14),
+            ),
             const SizedBox(height: 4),
-            Text('Value: $value',
-                style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 24,
-                    fontWeight: FontWeight.w800)),
+            Text(
+              'Value: $value',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 24,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
             const SizedBox(height: 16),
           ],
         ),
@@ -384,48 +491,47 @@ class _MapDashboardScreenState extends State<MapDashboardScreen> {
     );
   }
 
-  // Build danger zone circles based on per-sensor threat level
+  // Build danger zone circles — per-sensor, matching web dashboard colors
   List<CircleMarker> _buildCircles() {
     final circles = <CircleMarker>[];
+
+    // Web dashboard zone colors per sensor type
+    const zoneColors = {
+      'gas-leakage':  {'critical': Color(0xFFf85149), 'warning': Color(0xFFd29922)},
+      'ultra-sonic':  {'critical': Color(0xFF388bfd), 'warning': Color(0xFF58a6ff)},
+      'temperature':  {'critical': Color(0xFFf88800), 'warning': Color(0xFFd29922)},
+      'humidity':     {'critical': Color(0xFF58a6ff), 'warning': Color(0xFF388bfd)},
+      'camera':       {'critical': Color(0xFFf85149), 'warning': Color(0xFFd29922)},
+    };
 
     for (final p in _positions) {
       final type = p['sensor_type'] as String? ?? '';
       final lat = (p['lat'] as num).toDouble();
       final lng = (p['lng'] as num).toDouble();
 
-      // Get this sensor's threat level
       final lv = _latestValues[type];
-      final threat = lv?['threat_level'] ?? 'safe';
-      if (threat == 'safe') continue; // no zone for safe
+      final rawVal = lv?['value'] as num?;
+      if (rawVal == null) continue;
 
-      Color zoneColor;
-      double radius;
-      double opacity;
+      final status = _calculateStatus(type, rawVal.toDouble());
+      if (status == 'normal') continue;
 
-      if (threat == 'critical') {
-        // Red zone for gas/temp, blue zone for water/humidity
-        zoneColor = (type == 'gas-leakage' || type == 'temperature')
-            ? Colors.red
-            : Colors.blue;
-        radius = 500;
-        opacity = 0.25;
-      } else {
-        // Yellow zone for gas/temp warning, light blue for water/humidity warning
-        zoneColor = (type == 'gas-leakage' || type == 'temperature')
-            ? Colors.orange
-            : Colors.lightBlue;
-        radius = 300;
-        opacity = 0.15;
-      }
+      final colors = zoneColors[type] ?? {'critical': const Color(0xFFf85149), 'warning': const Color(0xFFd29922)};
+      final isAlert = status == 'alert';
+      final zoneColor = isAlert ? colors['critical']! : colors['warning']!;
+      final radius = isAlert ? 200.0 : 120.0;
+      final opacity = isAlert ? 0.25 : 0.15;
 
-      circles.add(CircleMarker(
-        point: LatLng(lat, lng),
-        radius: radius,
-        useRadiusInMeter: true,
-        color: zoneColor.withValues(alpha: opacity),
-        borderColor: zoneColor,
-        borderStrokeWidth: 2,
-      ));
+      circles.add(
+        CircleMarker(
+          point: LatLng(lat, lng),
+          radius: radius,
+          useRadiusInMeter: true,
+          color: zoneColor.withValues(alpha: opacity),
+          borderColor: zoneColor,
+          borderStrokeWidth: 2,
+        ),
+      );
     }
 
     return circles;
@@ -438,27 +544,27 @@ class _MapDashboardScreenState extends State<MapDashboardScreen> {
     if (_evacuationRoute != null) {
       // Safe route (green)
       final safeRoute = (_evacuationRoute!['safe_route'] as List)
-          .map((pt) =>
-              LatLng((pt[0] as num).toDouble(), (pt[1] as num).toDouble()))
+          .map(
+            (pt) =>
+                LatLng((pt[0] as num).toDouble(), (pt[1] as num).toDouble()),
+          )
           .toList();
 
-      polylines.add(Polyline(
-        points: safeRoute,
-        color: Colors.green,
-        strokeWidth: 5,
-      ));
+      polylines.add(
+        Polyline(points: safeRoute, color: Colors.green, strokeWidth: 5),
+      );
 
       // Blocked route (red dashed)
       final blockedRoute = (_evacuationRoute!['blocked_route'] as List)
-          .map((pt) =>
-              LatLng((pt[0] as num).toDouble(), (pt[1] as num).toDouble()))
+          .map(
+            (pt) =>
+                LatLng((pt[0] as num).toDouble(), (pt[1] as num).toDouble()),
+          )
           .toList();
 
-      polylines.add(Polyline(
-        points: blockedRoute,
-        color: Colors.red,
-        strokeWidth: 4,
-      ));
+      polylines.add(
+        Polyline(points: blockedRoute, color: Colors.red, strokeWidth: 4),
+      );
     }
 
     return polylines;
@@ -480,14 +586,10 @@ class _MapDashboardScreenState extends State<MapDashboardScreen> {
           // OpenStreetMap
           FlutterMap(
             mapController: _mapController,
-            options: MapOptions(
-              initialCenter: center,
-              initialZoom: 14.0,
-            ),
+            options: MapOptions(initialCenter: center, initialZoom: 14.0),
             children: [
               TileLayer(
-                urlTemplate:
-                    'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                 userAgentPackageName: 'com.example.aura_client',
               ),
               CircleLayer(circles: _buildCircles()),
@@ -496,23 +598,31 @@ class _MapDashboardScreenState extends State<MapDashboardScreen> {
             ],
           ),
 
-          // Top alert banner
-          if (hasActiveAlert)
+          // Top alert banner — shows for warning AND critical
+          if (hasActiveAlert || _alertTitle.isNotEmpty)
             Positioned(
               top: MediaQuery.of(context).padding.top + 8,
               left: 16,
               right: 16,
               child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
                 decoration: BoxDecoration(
                   color: _isFireDetected
                       ? Colors.red.shade900
-                      : Colors.blue.shade900,
+                      : _isFloodDetected
+                          ? Colors.blue.shade900
+                          : Colors.orange.shade900,
                   borderRadius: BorderRadius.circular(16),
                   boxShadow: [
                     BoxShadow(
-                      color: (_isFireDetected ? Colors.red : Colors.blue)
+                      color: (_isFireDetected
+                              ? Colors.red
+                              : _isFloodDetected
+                                  ? Colors.blue
+                                  : Colors.orange)
                           .withValues(alpha: 0.4),
                       blurRadius: 12,
                     ),
@@ -523,7 +633,9 @@ class _MapDashboardScreenState extends State<MapDashboardScreen> {
                     Icon(
                       _isFireDetected
                           ? Icons.local_fire_department
-                          : Icons.flood,
+                          : _isFloodDetected
+                              ? Icons.flood
+                              : Icons.warning_amber_rounded,
                       color: Colors.white,
                       size: 28,
                     ),
@@ -566,8 +678,9 @@ class _MapDashboardScreenState extends State<MapDashboardScreen> {
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
               decoration: BoxDecoration(
                 color: const Color(0xFF1B2333),
-                borderRadius:
-                    const BorderRadius.vertical(top: Radius.circular(20)),
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(20),
+                ),
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withValues(alpha: 0.3),
@@ -590,17 +703,23 @@ class _MapDashboardScreenState extends State<MapDashboardScreen> {
                   ),
                   Row(
                     children: [
-                      _sensorCard(
-                          'Temp', 'temperature', Icons.thermostat, 'C'),
+                      _sensorCard('Temp', 'temperature', Icons.thermostat, 'C'),
                       const SizedBox(width: 8),
                       _sensorCard(
-                          'Humidity', 'humidity', Icons.water_drop, '%'),
-                      const SizedBox(width: 8),
-                      _sensorCard('Gas', 'gas-leakage',
-                          Icons.local_fire_department, 'ppm'),
+                        'Humidity',
+                        'humidity',
+                        Icons.water_drop,
+                        '%',
+                      ),
                       const SizedBox(width: 8),
                       _sensorCard(
-                          'Water', 'ultrasonic', Icons.water, 'cm'),
+                        'Gas',
+                        'gas-leakage',
+                        Icons.local_fire_department,
+                        'ppm',
+                      ),
+                      const SizedBox(width: 8),
+                      _sensorCard('Water', 'ultra-sonic', Icons.water, 'cm'),
                     ],
                   ),
                 ],
@@ -613,19 +732,19 @@ class _MapDashboardScreenState extends State<MapDashboardScreen> {
   }
 
   Widget _sensorCard(
-      String label, String sensorType, IconData icon, String unit) {
+    String label,
+    String sensorType,
+    IconData icon,
+    String unit,
+  ) {
     final lv = _latestValues[sensorType];
-    final value = lv != null ? (lv['value'] as num).toStringAsFixed(0) : '--';
-    final threatLevel = lv?['threat_level'] ?? 'safe';
-
-    Color cardColor;
-    if (threatLevel == 'critical') {
-      cardColor = Colors.red;
-    } else if (threatLevel == 'warning') {
-      cardColor = Colors.orange;
-    } else {
-      cardColor = const Color(0xFF3fb950);
-    }
+    final rawVal = lv?['value'] as num?;
+    final value = rawVal != null ? rawVal.toStringAsFixed(0) : '--';
+    final status = rawVal != null
+        ? _calculateStatus(sensorType, rawVal.toDouble())
+        : 'normal';
+    final cardColor = _getStatusColor(status);
+    final statusLabel = status.toUpperCase();
 
     return Expanded(
       child: Container(
@@ -647,11 +766,15 @@ class _MapDashboardScreenState extends State<MapDashboardScreen> {
                 fontSize: 14,
               ),
             ),
+            Text(label, style: TextStyle(color: Colors.grey[400], fontSize: 10)),
+            const SizedBox(height: 2),
             Text(
-              label,
+              statusLabel,
               style: TextStyle(
-                color: Colors.grey[400],
-                fontSize: 10,
+                color: cardColor,
+                fontWeight: FontWeight.w700,
+                fontSize: 8,
+                letterSpacing: 0.5,
               ),
             ),
           ],

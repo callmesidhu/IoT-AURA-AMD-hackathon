@@ -5,7 +5,8 @@ import 'dart:async';
 
 class RedAlertScreen extends StatefulWidget {
   final String location;
-  const RedAlertScreen({super.key, required this.location});
+  final Map<String, dynamic>? alert;
+  const RedAlertScreen({super.key, required this.location, this.alert});
 
   @override
   State<RedAlertScreen> createState() => _RedAlertScreenState();
@@ -87,10 +88,10 @@ class _RedAlertScreenState extends State<RedAlertScreen>
                   color: Colors.white,
                 ),
                 const SizedBox(height: 32),
-                const Text(
-                  'EVACUATE IMMEDIATELY',
+                Text(
+                  widget.alert?['title']?.toUpperCase() ?? 'EVACUATE IMMEDIATELY',
                   textAlign: TextAlign.center,
-                  style: TextStyle(
+                  style: const TextStyle(
                     color: Colors.white,
                     fontSize: 40,
                     fontWeight: FontWeight.w900,
@@ -99,7 +100,7 @@ class _RedAlertScreenState extends State<RedAlertScreen>
                 ),
                 const SizedBox(height: 24),
                 Text(
-                  'HAZARD DETECTED AT:\n${widget.location.toUpperCase()}',
+                  '${widget.alert?['message'] ?? 'HAZARD DETECTED AT:'}\n${widget.location.toUpperCase()}',
                   textAlign: TextAlign.center,
                   style: const TextStyle(
                     color: Colors.white,

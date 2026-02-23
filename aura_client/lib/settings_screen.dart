@@ -1,8 +1,46 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'api_service.dart';
 
-class SettingsScreen extends StatelessWidget {
+class SettingsScreen extends StatefulWidget {
   final bool isEmbedded;
-  const SettingsScreen({super.key, this.isEmbedded = false});
+  final ApiService? api;
+  const SettingsScreen({super.key, this.isEmbedded = false, this.api});
+
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  String _userName = 'Aura Responder';
+  String _userRole = 'Premium Member';
+  String _userRegion = 'Global Region';
+  String _userId = 'UNKNOWN';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserProfile();
+  }
+
+  Future<void> _loadUserProfile() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _userName = prefs.getString('user_name') ?? 'Aura Responder';
+      _userRole = prefs.getString('user_role') ?? 'Premium Member';
+      _userRegion = prefs.getString('user_region') ?? 'Global Region';
+      _userId = prefs.getString('user_id') ?? 'UNKNOWN';
+    });
+  }
+
+  Future<void> _handleLogout() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.clear(); // Clear all saved session memory
+
+    if (mounted) {
+      Navigator.of(context, rootNavigator: true).pushReplacementNamed('/login');
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -10,7 +48,7 @@ class SettingsScreen extends StatelessWidget {
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        leading: isEmbedded
+        leading: widget.isEmbedded
             ? null
             : IconButton(
                 icon: const Icon(Icons.arrow_back, color: Colors.black),
@@ -54,20 +92,20 @@ class SettingsScreen extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'Arun Kumar',
-                        style: TextStyle(
+                      Text(
+                        _userName,
+                        style: const TextStyle(
                           fontSize: 20,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
                       Text(
-                        'Premium Member',
+                        _userRole,
                         style: TextStyle(color: Colors.grey.shade600),
                       ),
-                      const Text(
-                        'Kerala Region • ID: 893-221',
-                        style: TextStyle(
+                      Text(
+                        '$_userRegion • ID: $_userId',
+                        style: const TextStyle(
                           color: Colors.blueAccent,
                           fontSize: 12,
                         ),
@@ -105,6 +143,14 @@ class SettingsScreen extends StatelessWidget {
                 subtitle: 'Light Mode Active',
                 isToggle: true,
                 toggleValue: false,
+              ),
+              const Divider(height: 1),
+              _buildListTile(
+                icon: Icons.dns_outlined,
+                iconColor: Colors.blueAccent,
+                title: 'System Server Setup',
+                subtitle: 'Configure Backend IP',
+                onTap: () => _showIpConfigurationDialog(context),
               ),
             ]),
             const SizedBox(height: 24),
@@ -160,7 +206,7 @@ class SettingsScreen extends StatelessWidget {
 
             // Logout Button
             OutlinedButton(
-              onPressed: () {},
+              onPressed: _handleLogout,
               style: OutlinedButton.styleFrom(
                 minimumSize: const Size(double.infinity, 56),
                 side: const BorderSide(color: Colors.redAccent, width: 1.5),
@@ -245,8 +291,10 @@ class SettingsScreen extends StatelessWidget {
     bool isToggle = false,
     bool toggleValue = false,
     String? trailingText,
+    VoidCallback? onTap,
   }) {
     return ListTile(
+      onTap: onTap,
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       leading: Container(
         padding: const EdgeInsets.all(10),
@@ -300,6 +348,59 @@ class SettingsScreen extends StatelessWidget {
                 Icon(Icons.chevron_right, color: Colors.grey.shade400),
               ],
             ),
+    );
+  }
+
+  void _showIpConfigurationDialog(BuildContext context) {
+    final TextEditingController ipController = TextEditingController();
+
+    // Pre-fill the saved IP
+    SharedPreferences.getInstance().then((prefs) {
+      final savedIp = prefs.getString('server_ip');
+      if (savedIp != null) {
+        ipController.text = savedIp;
+      }
+    });
+
+    showDialog(
+      context: context,
+      builder: (BuildContext ctx) {
+        return AlertDialog(
+          title: const Text('System Server Setup'),
+          content: TextField(
+            controller: ipController,
+            decoration: const InputDecoration(
+              hintText: 'e.g., 192.168.1.5',
+              labelText: 'Backend IP Address',
+            ),
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                final newIp = ipController.text.trim();
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.setString('server_ip', newIp);
+                if (widget.api != null && newIp.isNotEmpty) {
+                  widget.api!.updateIpAddress(newIp);
+                }
+                if (ctx.mounted) {
+                  Navigator.pop(ctx);
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    SnackBar(content: Text('Server IP updated to: $newIp')),
+                  );
+                }
+              },
+              style: ElevatedButton.styleFrom(minimumSize: const Size(80, 40)),
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
     );
   }
 }

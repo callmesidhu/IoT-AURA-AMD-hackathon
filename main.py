@@ -155,6 +155,32 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 async def root():
     return FileResponse("static/index.html")
 
+# ----------------------------
+# Authentication
+# ----------------------------
+
+@app.post("/login")
+async def login(credentials: LoginRequest):
+    # In a real app we'd verify standard DB User
+    if not credentials.email or not credentials.password:
+        return {"status": "error", "message": "Missing credentials"}
+    
+    # Check dummy combination or let anything in for demo
+    user_name = credentials.email.split('@')[0].replace('.', ' ').title()
+    if not user_name: user_name = "Aura Responder"
+
+    return {
+        "status": "success",
+        "token": "aura-session-token-12345",
+        "user": {
+            "name": user_name,
+            "email": credentials.email,
+            "role": "Premium Member",
+            "region": "Kerala Region",
+            "id": "893-221"
+        }
+    }
+
 
 # ----------------------------
 # WebSocket Manager
@@ -182,6 +208,10 @@ manager = ConnectionManager()
 # ----------------------------
 # Sensor Model
 # ----------------------------
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
 
 class ValueOnly(BaseModel):
     value: float
@@ -261,7 +291,17 @@ async def get_evacuation_route(danger_lat: float, danger_lng: float):
         "status": "success",
         "danger_zone": [danger_lat, danger_lng],
         "blocked_route": blocked_route,
-        "safe_route": safe_route
+        "safe_route": safe_route,
+        "safe_exit": {
+            "lat": end_point[0],
+            "lng": end_point[1],
+            "distance_m": int(offset * 111000 * 2),  # Rough degree-to-meter conversion
+            "estimated_time_min": 3
+        },
+        "user_location": {
+            "lat": start_point[0],
+            "lng": start_point[1]
+        }
     }
 
 
@@ -269,6 +309,84 @@ async def get_evacuation_route(danger_lat: float, danger_lng: float):
 async def ultrasonic(data: ValueOnly):
     await process_sensor("ultra-sonic", data.value)
     return {"status": "ok"}
+
+
+# ----------------------------
+# Guide Content & Contacts API
+# ----------------------------
+
+@app.get("/guidelines")
+async def get_guidelines():
+    return [
+        {
+            "id": "ff_1",
+            "threat_type": "Flash Flood",
+            "title": "Immediate Actions for Flash Floods",
+            "icon": "water",
+            "color": "blue",
+            "steps": [
+                "Move immediately to higher ground.",
+                "Do not walk or drive through flood waters (Turn Around, Don't Drown).",
+                "Stay tuned to local weather stations and AURA alerts.",
+                "Disconnect utilities and appliances if it is safe to do so."
+            ]
+        },
+        {
+            "id": "fire_1",
+            "threat_type": "Structural Fire",
+            "title": "Evacuation Protocol for Fires",
+            "icon": "fire",
+            "color": "red",
+            "steps": [
+                "Evacuate the building immediately using the safest route.",
+                "Do not use elevators; use the stairs.",
+                "If there is smoke, stay low to the ground.",
+                "Call emergency services once safely outside."
+            ]
+        },
+        {
+            "id": "gas_1",
+            "threat_type": "Gas Leak",
+            "title": "Gas Leak Safety Guidelines",
+            "icon": "warning",
+            "color": "orange",
+            "steps": [
+                "Do not turn on or off any electrical switches.",
+                "Evacuate the area immediately and leave doors open behind you.",
+                "Do not use phones or lighters in the vicinity.",
+                "Report the leak from a safe distance."
+            ]
+        }
+    ]
+
+@app.get("/emergency-contacts")
+async def get_emergency_contacts():
+    return [
+        {
+            "id": "c1",
+            "name": "State Emergency Relief",
+            "number": "1070",
+            "type": "General Emergency"
+        },
+        {
+            "id": "c2",
+            "name": "Fire & Rescue Department",
+            "number": "101",
+            "type": "Fire"
+        },
+        {
+            "id": "c3",
+            "name": "National Disaster Response (NDRF)",
+            "number": "112",
+            "type": "Disaster"
+        },
+        {
+            "id": "c4",
+            "name": "Medical Emergency (Ambulance)",
+            "number": "108",
+            "type": "Medical"
+        }
+    ]
 
 
 if __name__ == "__main__":
