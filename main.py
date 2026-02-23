@@ -5,6 +5,10 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import List
 from datetime import datetime
+import asyncio
+import cv2
+import numpy as np
+import urllib.request
 
 from config.db import engine, Base
 from models.sensor_position import SensorPosition  # ensure model is registered
@@ -14,6 +18,117 @@ from routes.sensor_positions import router as positions_router
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Satwa Sensor Dashboard")
+
+# ----------------------------
+# DroidCam Background Task
+# ----------------------------
+DROIDCAM_URL = "http://10.10.168.105:4747/video"
+
+import os
+
+# Try to load TensorFlow and the custom model
+FIRE_MODEL = None
+try:
+    import tensorflow as tf
+    if os.path.exists("fire_model.h5"):
+        FIRE_MODEL = tf.keras.models.load_model("fire_model.h5")
+        print("Loaded custom CNN fire_model.h5 successfully.")
+except ImportError:
+    print("TensorFlow not installed. Running without custom CNN model.")
+except Exception as e:
+    print(f"Error loading fire_model.h5: {e}")
+
+
+async def poll_camera_fire_detection():
+    print(f"Starting DroidCam Fire Detection Polling on {DROIDCAM_URL}...")
+    
+    # Use OpenCV VideoCapture for the stream
+    cap = cv2.VideoCapture(DROIDCAM_URL)
+    
+    while True:
+        try:
+            if not cap.isOpened():
+                print("Reconnecting to DroidCam video stream...")
+                cap.open(DROIDCAM_URL)
+                await asyncio.sleep(2)
+                continue
+
+            ret, frame = cap.read()
+            
+            if ret and frame is not None:
+                print("Image captured from stream...")
+                print("Image Reading...")
+                is_fire = False
+                fire_value = 0
+                
+                if FIRE_MODEL is not None:
+                    # CNN Logic
+                    img = cv2.resize(frame, (128, 128))
+                    img = img / 255.0
+                    img = np.expand_dims(img, axis=0)
+                    prediction = FIRE_MODEL.predict(img, verbose=0)[0][0]
+                    fire_value = int(prediction * 10000) # Scale to match legacy logic UI
+                    
+                    if prediction > 0.8:
+                        is_fire = True
+                        print(f"🔥 FIRE DETECTED!! (CNN Confidence: {prediction:.2f})")
+                    else:
+                        print(f"No fire detected. (CNN Confidence: {prediction:.2f})")
+                else:
+                    # Fallback HSV Logic
+                    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+                    # Reverted to stricter bounds to avoid false positives in room lighting
+                    lower_bound = np.array([4, 150, 150])
+                    upper_bound = np.array([25, 255, 255])
+                    mask = cv2.inRange(hsv, lower_bound, upper_bound)
+                    fire_pixels = cv2.countNonZero(mask)
+                    total_pixels = frame.shape[0] * frame.shape[1]
+                    fire_value = fire_pixels
+                    
+                    if fire_pixels > (total_pixels * 0.005): # reverted to 0.5%
+                        is_fire = True
+                        print(f"🔥 FIRE DETECTED!! ({fire_pixels} pixels via HSV)")
+                    else:
+                        print("No fire detected. (HSV)")
+                        
+                if is_fire:
+                    # Push a websocket alert for the camera sensor
+                    alert_payload = {
+                        "sensor": "camera",
+                        "value": fire_value,
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "threat_level": "critical",
+                        "alert": {
+                            "title": "FIRE DETECTED!",
+                            "message": "Camera detected fire flames in view.",
+                            "severity": "critical",
+                            "sensor": "camera"
+                        }
+                    }
+                    if manager:
+                        await manager.broadcast(alert_payload)
+                else:
+                    # Notify safe state to clear alerts
+                    safe_payload = {
+                        "sensor": "camera",
+                        "value": fire_value,
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "threat_level": "safe"
+                    }
+                    if manager:
+                        await manager.broadcast(safe_payload)
+            else:
+                print("Failed to read frame, reconnecting...")
+                cap.release()
+                
+        except Exception as e:
+            print(f"Error polling DroidCam: {e}")
+            
+        await asyncio.sleep(5)
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(poll_camera_fire_detection())
 
 # ----------------------------
 # CORS — allow browser connections from any origin on the LAN
@@ -120,7 +235,7 @@ async def gas(data: ValueOnly):
 
 @app.post("/sensor/ultrasonic")
 async def ultrasonic(data: ValueOnly):
-    await process_sensor("ultrasonic", data.value)
+    await process_sensor("ultra-sonic", data.value)
     return {"status": "ok"}
 
 

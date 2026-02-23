@@ -675,6 +675,7 @@
           <option value="humidity">💧 Humidity</option>
           <option value="gas-leakage">💨 Gas Leakage</option>
           <option value="ultra-sonic">📡 Ultra-Sonic</option>
+          <option value="camera">📷 Camera/Fire</option>
         </select>
       </div>
 
@@ -729,33 +730,39 @@
       'temperature': '🌡',
       'humidity': '💧',
       'gas-leakage': '💨',
-      'ultra-sonic': '📡'
+      'ultra-sonic': '📡',
+      'camera': '📷'
     };
 
     // Threshold logic → returns 'normal' | 'warning' | 'alert'
-function getStatus(type, value) {
-  if (type === 'temperature') {
-    if (value <= 30) return 'normal';
-    if (value <= 45) return 'warning';
-    return 'alert';
-  }
-  if (type === 'humidity') {
-    if (value <= 60) return 'normal';
-    if (value <= 85) return 'warning';
-    return 'alert';
-  }
-  if (type === 'gas-leakage') {
-    if (value <= 800) return 'normal';
-    if (value <= 1200) return 'warning';
-    return 'alert';
-  }
-  if (type === 'ultra-sonic' || type === 'ultrasonic') {
-    if (value >= 50) return 'normal';
-    if (value >= 20) return 'warning';
-    return 'alert';
-  }
-  return 'normal';
-}
+    function getStatus(type, value) {
+      if (type === 'temperature') {
+        if (value <= 30) return 'normal';
+        if (value <= 45) return 'warning';
+        return 'alert';
+      }
+      if (type === 'humidity') {
+        if (value <= 60) return 'normal';
+        if (value <= 85) return 'warning';
+        return 'alert';
+      }
+      if (type === 'gas-leakage') {
+        if (value <= 800) return 'normal';
+        if (value <= 1200) return 'warning';
+        return 'alert';
+      }
+      if (type === 'ultra-sonic' || type === 'ultrasonic') {
+        if (value < 25) return 'alert';
+        if (value < 50) return 'warning';
+        return 'normal';
+      }
+      if (type === 'camera') {
+        if (value > 6000) return 'alert';
+        if (value > 2000) return 'warning';
+        return 'normal';
+      }
+      return 'normal';
+    }
 
     const STATUS_COLORS = {
       normal: '#3fb950',
@@ -989,44 +996,45 @@ function getStatus(type, value) {
     }
 
     function updateDangerZones(sensorType, threatLevel) {
-  const affected = sensors.filter(s => s.sensor_type === sensorType);
-  // Per-sensor-type colors
-  const zoneColors = {
-    'gas-leakage': { critical: '#f85149', warning: '#d29922' },
-    'ultrasonic':  { critical: '#388bfd', warning: '#58a6ff' },
-    'temperature': { critical: '#f88800', warning: '#d29922' },
-    'humidity':    { critical: '#58a6ff', warning: '#388bfd' },
-  };
-  const colors = zoneColors[sensorType] || { critical: '#f85149', warning: '#d29922' };
+      const affected = sensors.filter(s => s.sensor_type === sensorType);
+      // Per-sensor-type colors
+      const zoneColors = {
+        'gas-leakage': { critical: '#f85149', warning: '#d29922' },
+        'ultra-sonic': { critical: '#388bfd', warning: '#58a6ff' },
+        'temperature': { critical: '#f88800', warning: '#d29922' },
+        'humidity': { critical: '#58a6ff', warning: '#388bfd' },
+        'camera': { critical: '#f85149', warning: '#d29922' }, // fire
+      };
+      const colors = zoneColors[sensorType] || { critical: '#f85149', warning: '#d29922' };
 
-  affected.forEach(s => {
-    // Remove old circle
-    if (dangerCircles[s.id]) {
-      map.removeLayer(dangerCircles[s.id]);
-      delete dangerCircles[s.id];
+      affected.forEach(s => {
+        // Remove old circle
+        if (dangerCircles[s.id]) {
+          map.removeLayer(dangerCircles[s.id]);
+          delete dangerCircles[s.id];
+        }
+        // Add danger zone circle for warnings and criticals
+        if (threatLevel === 'critical') {
+          dangerCircles[s.id] = L.circle([s.lat, s.lng], {
+            radius: 200,
+            color: colors.critical,
+            fillColor: colors.critical,
+            fillOpacity: 0.25,
+            weight: 2,
+            dashArray: '5,5',
+          }).addTo(map);
+        } else if (threatLevel === 'warning') {
+          dangerCircles[s.id] = L.circle([s.lat, s.lng], {
+            radius: 120,
+            color: colors.warning,
+            fillColor: colors.warning,
+            fillOpacity: 0.15,
+            weight: 2,
+            dashArray: '5,5',
+          }).addTo(map);
+        }
+      });
     }
-    // Add danger zone circle for warnings and criticals
-    if (threatLevel === 'critical') {
-      dangerCircles[s.id] = L.circle([s.lat, s.lng], {
-        radius: 200,
-        color: colors.critical,
-        fillColor: colors.critical,
-        fillOpacity: 0.25,
-        weight: 2,
-        dashArray: '5,5',
-      }).addTo(map);
-    } else if (threatLevel === 'warning') {
-      dangerCircles[s.id] = L.circle([s.lat, s.lng], {
-        radius: 120,
-        color: colors.warning,
-        fillColor: colors.warning,
-        fillOpacity: 0.15,
-        weight: 2,
-        dashArray: '5,5',
-      }).addTo(map);
-    }
-  });
-}
 
     function connectWS() {
       ws = new WebSocket(WS_URL);
@@ -1050,22 +1058,42 @@ function getStatus(type, value) {
         latestValues[data.sensor] = { value: data.value, timestamp: data.timestamp };
         updateForSensorType(data.sensor);
 
-        // Handle threat alerts
-        if (data.threat_level && data.threat_level !== 'safe') {
-          updateDangerZones(data.sensor, data.threat_level);
+        // Derive local threat level from value if not provided explicitly
+        let threatLevel = data.threat_level;
+        if (!threatLevel) {
+          const status = getStatus(data.sensor, data.value);
+          if (status === 'alert') threatLevel = 'critical';
+          else if (status === 'warning') threatLevel = 'warning';
+          else threatLevel = 'safe';
+        }
+
+        // Handle threat alerts and zones
+        if (threatLevel && threatLevel !== 'safe') {
+          updateDangerZones(data.sensor, threatLevel);
+          // If the backend sent a specific banner alert, show it
           if (data.alert) {
-            showAlertBanner(data.alert);
-            if (data.threat_level === 'critical') {
+             showAlertBanner(data.alert);
+          } else {
+             // Otherwise, just a generic alert banner
+             showAlertBanner({
+               sensor: data.sensor,
+               severity: threatLevel,
+               title: `${data.sensor.toUpperCase()} ALERT`,
+               message: `Sensor value ${data.value} exceeded threshold.`
+             });
+          }
+
+          if (threatLevel === 'critical') {
               playAlertBeep();
-              // Fetch and draw evacuation route ONLY on critical
+              // Evacuation route for first matching physical sensor
               const affected = sensors.filter(s => s.sensor_type === data.sensor);
               if (affected.length > 0) {
+                // Fetch and draw evacuation route ONLY on critical
                 fetchEvacuationRoute(affected[0].lat, affected[0].lng);
               }
-            } else {
-              // Warning: clear any existing evacuation route
-              clearEvacuationRoute();
-            }
+          } else {
+             // Warning: clear any existing evacuation route (if it just downgraded)
+             clearEvacuationRoute();
           }
         } else {
           updateDangerZones(data.sensor, 'safe');
@@ -1087,7 +1115,7 @@ function getStatus(type, value) {
         const route = await res.json();
         clearEvacuationRoute();
         drawEvacuationRoute(route);
-      } catch(e) { console.log('Evacuation route error', e); }
+      } catch (e) { console.log('Evacuation route error', e); }
     }
 
     function drawEvacuationRoute(route) {
