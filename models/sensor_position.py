@@ -10,5 +10,5 @@ class SensorPosition(Base):
     name = Column(String, nullable=False)
     lat = Column(Float, nullable=False)
     lng = Column(Float, nullable=False)
-    sensor_type = Column(String, nullable=False)  # temperature, humidity, gas-leakage, ultra-sonic
+    sensor_type = Column(String, nullable=False)  # temperature, humidity, gas-leakage, ultra-sonic, earthquake
     created_at = Column(DateTime, default=datetime.utcnow)

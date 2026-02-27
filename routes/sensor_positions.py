@@ -7,6 +7,12 @@ import json
 import requests
 from config.db import SessionLocal
 from models.sensor_position import SensorPosition
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+FRONTEND_SERVER_IP = os.getenv("FRONTEND_SERVER_IP", "localhost")
+FRONTEND_SERVER_PORT = os.getenv("FRONTEND_SERVER_PORT", "3030")
 
 router = APIRouter(prefix="/positions", tags=["positions"])
 
@@ -25,7 +31,7 @@ def generate_position_hash(pos_dict: dict, action: str) -> str:
 
 def send_to_blockchain(sensor_id: int, data_hash: str):
     """Sends the hash to the local Rust blockchain service."""
-    url = "http://localhost:3030/register"
+    url = f"http://{FRONTEND_SERVER_IP}:{FRONTEND_SERVER_PORT}/register" # Changed to use environment variables
     payload = {
         "sensor_id": sensor_id,
         "data_hash": data_hash
@@ -36,6 +42,15 @@ def send_to_blockchain(sensor_id: int, data_hash: str):
         print(f"✅ Blockchain sync success for sensor {sensor_id}: {response.json()}")
     except Exception as e:
         print(f"❌ Blockchain sync failed for sensor {sensor_id}: {e}")
+
+    # Forward the new sensor registration payload to the standalone Notification Server
+    try:
+        url = f"http://{FRONTEND_SERVER_IP}:{FRONTEND_SERVER_PORT}/register"
+        response = requests.post(url, json=payload, timeout=5)
+        response.raise_for_status()
+        print(f"✅ Notification server sync success for sensor {sensor_id}: {response.json()}")
+    except Exception as e:
+        print(f"Error notifying Flutter UI for position add: {e}")
 
 
 # ---------- DB Dependency ----------
@@ -54,7 +69,7 @@ class SensorPositionCreate(BaseModel):
     name: str
     lat: float
     lng: float
-    sensor_type: str  # temperature | humidity | gas-leakage | ultra-sonic
+    sensor_type: str  # temperature | humidity | gas-leakage | ultra-sonic | earthquake
 
 
 class SensorPositionOut(BaseModel):

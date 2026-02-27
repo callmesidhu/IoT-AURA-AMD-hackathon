@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+pydantic
+sqlalchemy
+requests
+numpy
+opencv-python
+tensorboard
+tensorflow
+ultralytics

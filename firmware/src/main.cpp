@@ -6,6 +6,8 @@
 #include <WiFiAP.h>
 #include <Wire.h>
 #include <painlessMesh.h>
+#include <Adafruit_MPU6050.h>
+#include <Adafruit_Sensor.h>
 
 // --- PIN DEFINITIONS ---
 #define TRIG 5
@@ -29,6 +31,7 @@ const char *serverBase = "http://10.10.168.229:8000";
 
 // --- HARDWARE OBJECTS ---
 LiquidCrystal_I2C lcd(0x27, 16, 2);
+Adafruit_MPU6050 mpu;
 
 long duration;
 float distance;
@@ -256,6 +259,15 @@ void setup() {
   delay(1000);
   lcd.clear();
 
+  // 4. Initialize MPU6050
+  if (!mpu.begin()) {
+    Serial.println("Failed to find MPU6050 chip");
+  } else {
+    Serial.println("MPU6050 Found!");
+    mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
+    mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
+  }
+
   Serial.println("================================\n");
 }
 
@@ -291,6 +303,14 @@ void loop() {
     int gasDigital = digitalRead(GAS_DO);
     distance = readUltrasonic();
 
+    // Read MPU6050
+    sensors_event_t a, g, temp;
+    mpu.getEvent(&a, &g, &temp);
+    float magnitude = sqrt(a.acceleration.x * a.acceleration.x + 
+                           a.acceleration.y * a.acceleration.y + 
+                           a.acceleration.z * a.acceleration.z);
+    float earthquake_mag = abs(magnitude - 9.81); // Deviation from 1G
+
     // --- Get variables received from Mesh (C3) ---
     float temperature = receivedTemp;
     float humidity = receivedHum;
@@ -302,6 +322,7 @@ void loop() {
     Serial.printf("Gas (AO)        : %.0f\n", gasValue);
     Serial.printf("Gas (DO)        : %d\n", gasDigital);
     Serial.printf("Distance        : %.2f cm\n", distance);
+    Serial.printf("Earthquake Dev  : %.2f m/s2\n", earthquake_mag);
     Serial.printf("Mesh nodes      : %d\n", mesh.getNodeList().size());
     Serial.println("-------------------------");
 
@@ -371,6 +392,16 @@ void loop() {
       lcd.print("C");
     }
 
+    if (earthquake_mag > 2.0) {
+      danger = true;
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("Earthquake!");
+      lcd.setCursor(0, 1);
+      lcd.print("Mag: ");
+      lcd.print(earthquake_mag, 1);
+    }
+
     // --- Buzzer & LED ---
     if (danger) {
       digitalWrite(REDLED, HIGH);
@@ -391,5 +422,6 @@ void loop() {
 
     sendData("/sensor/gas-leakage", gasValue);
     sendData("/sensor/ultrasonic", distance);
+    sendData("/sensor/earthquake", earthquake_mag);
   }
 }

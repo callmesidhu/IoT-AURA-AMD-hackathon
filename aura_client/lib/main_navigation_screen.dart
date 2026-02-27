@@ -115,6 +115,7 @@ class _MapDashboardScreenState extends State<MapDashboardScreen> {
   // Alert state
   bool _isFireDetected = false;
   bool _isFloodDetected = false;
+  bool _isEarthquakeDetected = false;
   String _currentThreatLevel = 'safe';
   String _alertTitle = '';
   String _alertMessage = '';
@@ -227,6 +228,26 @@ class _MapDashboardScreenState extends State<MapDashboardScreen> {
               _hasPushedAlert = false;
             });
           }
+        } else if (sensor == 'earthquake') {
+          _isEarthquakeDetected = true;
+          _isFireDetected = false;
+          _isFloodDetected = false;
+          _alertTitle = alert?['title'] ?? 'EARTHQUAKE ALERT';
+          _alertMessage = alert?['message'] ?? 'Critical seismic activity detected.';
+
+          if (!_hasPushedAlert) {
+            _hasPushedAlert = true;
+            _fetchEvacuationRoute(sensor);
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) =>
+                    RedAlertScreen(location: _getLocationForSensor(sensor), alert: alert),
+              ),
+            ).then((_) {
+              _hasPushedAlert = false;
+            });
+          }
         }
       } else if (threatLevel == 'warning') {
         _alertTitle = alert?['title'] ?? 'Warning';
@@ -238,6 +259,9 @@ class _MapDashboardScreenState extends State<MapDashboardScreen> {
         if (sensor == 'ultra-sonic' || sensor == 'humidity') {
           _isFloodDetected = false;
         }
+        if (sensor == 'earthquake') {
+          _isEarthquakeDetected = false;
+        }
         _evacuationRoute = null;
       } else {
         // Safe — clear everything for this sensor category
@@ -246,6 +270,9 @@ class _MapDashboardScreenState extends State<MapDashboardScreen> {
         }
         if (sensor == 'ultra-sonic' || sensor == 'humidity') {
           _isFloodDetected = false;
+        }
+        if (sensor == 'earthquake') {
+          _isEarthquakeDetected = false;
         }
         _evacuationRoute = null;
         _alertTitle = '';
@@ -310,6 +337,11 @@ class _MapDashboardScreenState extends State<MapDashboardScreen> {
       if (value > 2000) return 'warning';
       return 'normal';
     }
+    if (type == 'earthquake') {
+      if (value < 2.0) return 'normal';
+      if (value < 5.0) return 'warning';
+      return 'alert';
+    }
     return 'normal';
   }
 
@@ -327,6 +359,7 @@ class _MapDashboardScreenState extends State<MapDashboardScreen> {
     'gas-leakage': 'ppm',
     'ultra-sonic': 'cm',
     'camera': '',
+    'earthquake': 'M',
   };
 
   // Build marker list — each marker colored by its own sensor value
@@ -457,6 +490,8 @@ class _MapDashboardScreenState extends State<MapDashboardScreen> {
         return Icons.thermostat;
       case 'humidity':
         return Icons.water_drop;
+      case 'earthquake':
+        return Icons.vibration;
       default:
         return Icons.sensors;
     }
@@ -515,6 +550,7 @@ class _MapDashboardScreenState extends State<MapDashboardScreen> {
       'temperature':  {'critical': Color(0xFFf88800), 'warning': Color(0xFFd29922)},
       'humidity':     {'critical': Color(0xFF58a6ff), 'warning': Color(0xFF388bfd)},
       'camera':       {'critical': Color(0xFFf85149), 'warning': Color(0xFFd29922)},
+      'earthquake':   {'critical': Color(0xFF8b4513), 'warning': Color(0xFFd2691e)}, // brown/orange
     };
 
     for (final p in _positions) {
@@ -585,7 +621,7 @@ class _MapDashboardScreenState extends State<MapDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    bool hasActiveAlert = _isFireDetected || _isFloodDetected;
+    bool hasActiveAlert = _isFireDetected || _isFloodDetected || _isEarthquakeDetected;
     final center = _positions.isNotEmpty
         ? LatLng(
             (_positions.first['lat'] as num).toDouble(),
@@ -623,19 +659,23 @@ class _MapDashboardScreenState extends State<MapDashboardScreen> {
                   vertical: 12,
                 ),
                 decoration: BoxDecoration(
-                  color: _isFireDetected
-                      ? Colors.red.shade900
-                      : _isFloodDetected
-                          ? Colors.blue.shade900
-                          : Colors.orange.shade900,
+                  color: _isEarthquakeDetected
+                      ? Colors.brown.shade800
+                      : _isFireDetected
+                          ? Colors.red.shade900
+                          : _isFloodDetected
+                              ? Colors.blue.shade900
+                              : Colors.orange.shade900,
                   borderRadius: BorderRadius.circular(16),
                   boxShadow: [
                     BoxShadow(
-                      color: (_isFireDetected
-                              ? Colors.red
-                              : _isFloodDetected
-                                  ? Colors.blue
-                                  : Colors.orange)
+                      color: (_isEarthquakeDetected
+                              ? Colors.brown
+                              : _isFireDetected
+                                  ? Colors.red
+                                  : _isFloodDetected
+                                      ? Colors.blue
+                                      : Colors.orange)
                           .withValues(alpha: 0.4),
                       blurRadius: 12,
                     ),
@@ -644,11 +684,13 @@ class _MapDashboardScreenState extends State<MapDashboardScreen> {
                 child: Row(
                   children: [
                     Icon(
-                      _isFireDetected
-                          ? Icons.local_fire_department
-                          : _isFloodDetected
-                              ? Icons.flood
-                              : Icons.warning_amber_rounded,
+                      _isEarthquakeDetected
+                          ? Icons.vibration
+                          : _isFireDetected
+                              ? Icons.local_fire_department
+                              : _isFloodDetected
+                                  ? Icons.flood
+                                  : Icons.warning_amber_rounded,
                       color: Colors.white,
                       size: 28,
                     ),

@@ -321,6 +321,12 @@
       border: 1px solid rgba(63, 185, 80, 0.3);
     }
 
+    .badge-earthquake {
+      background: rgba(139, 69, 19, 0.15);
+      color: #cd853f;
+      border: 1px solid rgba(139, 69, 19, 0.3);
+    }
+
     .sensor-value-row {
       display: flex;
       align-items: baseline;
@@ -668,7 +674,7 @@
         </div>
       </div>
 
-      <div class="form-group" style="margin-bottom:10px">
+    <div class="form-group" style="margin-bottom:10px">
         <label>Sensor Type</label>
         <select id="f-type">
           <option value="temperature">🌡 Temperature</option>
@@ -676,6 +682,7 @@
           <option value="gas-leakage">💨 Gas Leakage</option>
           <option value="ultra-sonic">📡 Ultra-Sonic</option>
           <option value="camera">📷 Camera/Fire</option>
+          <option value="earthquake">📳 Earthquake</option>
         </select>
       </div>
 
@@ -722,7 +729,8 @@
       'temperature': '°C',
       'humidity': '%',
       'gas-leakage': 'ppm',
-      'ultra-sonic': 'cm'
+      'ultra-sonic': 'cm',
+      'earthquake': 'M'
     };
 
     // Sensor icons
@@ -731,7 +739,8 @@
       'humidity': '💧',
       'gas-leakage': '💨',
       'ultra-sonic': '📡',
-      'camera': '📷'
+      'camera': '📷',
+      'earthquake': '📳'
     };
 
     // Threshold logic → returns 'normal' | 'warning' | 'alert'
@@ -760,6 +769,11 @@
         if (value > 6000) return 'alert';
         if (value > 2000) return 'warning';
         return 'normal';
+      }
+      if (type === 'earthquake') {
+        if (value < 2.0) return 'normal';
+        if (value < 5.0) return 'warning';
+        return 'alert';
       }
       return 'normal';
     }
@@ -1004,6 +1018,7 @@
         'temperature': { critical: '#f88800', warning: '#d29922' },
         'humidity': { critical: '#58a6ff', warning: '#388bfd' },
         'camera': { critical: '#f85149', warning: '#d29922' }, // fire
+        'earthquake': { critical: '#8b4513', warning: '#d2691e' }, // brown/orange
       };
       const colors = zoneColors[sensorType] || { critical: '#f85149', warning: '#d29922' };
 

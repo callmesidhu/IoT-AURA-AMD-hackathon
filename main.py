@@ -13,6 +13,10 @@ import urllib.request
 from config.db import engine, Base
 from models.sensor_position import SensorPosition  # ensure model is registered
 from routes.sensor_positions import router as positions_router
+from services.threat_detector import ThreatDetector
+
+# Initialize the threat detector
+threat_analyzer = ThreatDetector()
 
 # Create DB tables on startup
 Base.metadata.create_all(bind=engine)
@@ -25,29 +29,33 @@ latest_sensor_data = {}
 # ----------------------------
 # DroidCam Background Task
 # ----------------------------
-DROIDCAM_URL = "http://10.10.168.105:4747/video"
-
 import os
+from dotenv import load_dotenv
 
-# Try to load TensorFlow and the custom model
+load_dotenv()
+
+DROIDCAM_IP = os.getenv("DROIDCAM_IP", "10.10.168.105")
+DROIDCAM_PORT = os.getenv("DROIDCAM_PORT", "4747")
+DROIDCAM_URL = f"http://{DROIDCAM_IP}:{DROIDCAM_PORT}/video"
+
+# Try to load YOLOv8 model for Fire & Accident detection
 FIRE_MODEL = None
 try:
-    import tensorflow as tf
-    if os.path.exists("fire_model.h5"):
-        FIRE_MODEL = tf.keras.models.load_model("fire_model.h5")
-        print("Loaded custom CNN fire_model.h5 successfully.")
+    from ultralytics import YOLO
+    # We will use the pretrained yolov8m.pt model for now, which can detect cars, trucks, etc.
+    # A true fire model would require a custom trained .pt file, but we will load yolov8m as a placeholder/base.
+    FIRE_MODEL = YOLO("yolov8m.pt")
+    print("Loaded YOLOv8 model successfully.")
 except ImportError:
-    print("TensorFlow not installed. Running without custom CNN model.")
+    print("Ultralytics not installed. Running without YOLO model.")
 except Exception as e:
-    print(f"Error loading fire_model.h5: {e}")
-
+    print(f"Error loading YOLO model: {e}")
 
 import threading
 
 def poll_camera_fire_detection_sync():
-    print(f"Starting DroidCam Fire Detection Polling on {DROIDCAM_URL}...")
+    print(f"Starting DroidCam Fire/Accident Detection Polling on {DROIDCAM_URL}...")
     
-    # Use OpenCV VideoCapture for the stream
     cap = cv2.VideoCapture(DROIDCAM_URL)
     
     while True:
@@ -62,72 +70,56 @@ def poll_camera_fire_detection_sync():
             ret, frame = cap.read()
             
             if ret and frame is not None:
-                print("Image captured from stream...")
-                print("Image Reading...")
-                is_fire = False
-                fire_value = 0
+                is_danger = False
+                danger_type = ""
+                confidence_val = 0.0
                 
                 if FIRE_MODEL is not None:
-                    # CNN Logic
-                    img = cv2.resize(frame, (128, 128))
-                    img = img / 255.0
-                    img = np.expand_dims(img, axis=0)
-                    prediction = FIRE_MODEL.predict(img, verbose=0)[0][0]
-                    fire_value = int(prediction * 10000) # Scale to match legacy logic UI
+                    # Run YOLOv8 inference
+                    results = FIRE_MODEL(frame, verbose=False)
                     
-                    if prediction > 0.8:
-                        is_fire = True
-                        print(f"🔥 FIRE DETECTED!! (CNN Confidence: {prediction:.2f})")
-                    else:
-                        print(f"No fire detected. (CNN Confidence: {prediction:.2f})")
-                else:
-                    # Fallback HSV Logic
-                    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-                    # Reverted to stricter bounds to avoid false positives in room lighting
-                    lower_bound = np.array([4, 150, 150])
-                    upper_bound = np.array([25, 255, 255])
-                    mask = cv2.inRange(hsv, lower_bound, upper_bound)
-                    fire_pixels = cv2.countNonZero(mask)
-                    total_pixels = frame.shape[0] * frame.shape[1]
-                    fire_value = fire_pixels
-                    
-                    if fire_pixels > (total_pixels * 0.005): # reverted to 0.5%
-                        is_fire = True
-                        print(f"🔥 FIRE DETECTED!! ({fire_pixels} pixels via HSV)")
-                    else:
-                        print("No fire detected. (HSV)")
-                        
-                if is_fire:
+                    for r in results:
+                        for box in r.boxes:
+                            label = FIRE_MODEL.names[int(box.cls)]
+                            conf = float(box.conf)
+                            
+                            # Example: check for Fire (if custom model) or cars/trucks for "accident" proxy
+                            # We trigger danger if we see 'fire' or if we want to simulate an accident, 'car' with high conf in a specific zone.
+                            # For hackathon purposes, we will flag 'fire', 'car', 'truck', 'bus' as potential hazards if confidence is very high.
+                            if conf > 0.7:
+                                if label.lower() in ["fire", "smoke", "accident", "car crash", "car", "truck"]:
+                                    is_danger = True
+                                    danger_type = label.upper()
+                                    confidence_val = conf
+                                    print(f"⚠️ DANGER DETECTED!! ({danger_type} - Confidence: {conf:.2f})")
+                
+                if is_danger:
                     # Push a websocket alert for the camera sensor
                     alert_payload = {
                         "sensor": "camera",
-                        "value": fire_value,
+                        "value": int(confidence_val * 100),
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                         "threat_level": "critical",
                         "alert": {
-                            "title": "FIRE DETECTED!",
-                            "message": "Camera detected fire flames in view.",
+                            "title": f"{danger_type} DETECTED!",
+                            "message": f"Camera detected {danger_type} with {confidence_val:.2f} confidence.",
                             "severity": "critical",
                             "sensor": "camera"
                         }
                     }
                     latest_sensor_data["camera"] = alert_payload
-                    print(f"DEBUG: Camera Fire Alert Sent - Value: {fire_value}")
+                    print(f"DEBUG: Camera Alert Sent - {danger_type}")
                     if manager:
-                        # Schedule coroutine on main event loop implicitly handled since broadcast might not be thread-safe
                         asyncio.run_coroutine_threadsafe(manager.broadcast(alert_payload), loop)
                 else:
                     # Notify safe state to clear alerts
                     safe_payload = {
                         "sensor": "camera",
-                        "value": fire_value,
+                        "value": 0,
                         "timestamp": datetime.now().isoformat(),
                         "threat_level": "safe"
                     }
                     latest_sensor_data["camera"] = safe_payload
-                    # Only print every few frames to avoid spamming, or just print value
-                    if fire_value > 0:
-                        print(f"DEBUG: Camera Frame - No Fire, but found {fire_value} fire-like pixels.")
                     
                     if manager:
                         asyncio.run_coroutine_threadsafe(manager.broadcast(safe_payload), loop)
@@ -253,13 +245,25 @@ async def websocket_endpoint(websocket: WebSocket):
 # ----------------------------
 
 async def process_sensor(sensor_name: str, value: float):
+    # Base payload structure
     payload = {
         "sensor": sensor_name,
         "value": value,
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
+    
+    # Analyze threat level via ThreatDetector
+    alert = threat_analyzer.analyze(sensor_name, value)
+    
+    if alert:
+        payload["threat_level"] = alert["severity"]
+        if alert["severity"] in ["warning", "critical"]:
+            payload["alert"] = alert
+    else:
+        payload["threat_level"] = "safe"
+
     latest_sensor_data[sensor_name] = payload
-    print(f"DEBUG: Received {sensor_name}: {value}")
+    print(f"DEBUG: Received {sensor_name}: {value} | Threat: {payload.get('threat_level')}")
     await manager.broadcast(payload)  # push to all WebSocket clients (map)
 
 
@@ -273,6 +277,10 @@ async def temperature(data: ValueOnly):
     await process_sensor("temperature", data.value)
     return {"status": "ok"}
 
+@app.post("/sensor/earthquake")
+async def earthquake(data: ValueOnly):
+    await process_sensor("earthquake", data.value)
+    return {"status": "ok"}
 
 @app.post("/sensor/humidity")
 async def humidity(data: ValueOnly):
@@ -378,6 +386,19 @@ async def get_guidelines():
                 "Evacuate the area immediately and leave doors open behind you.",
                 "Do not use phones or lighters in the vicinity.",
                 "Report the leak from a safe distance."
+            ]
+        },
+        {
+            "id": "earthquake_1",
+            "threat_type": "Earthquake",
+            "title": "Earthquake Safety Guidelines",
+            "icon": "vibration",
+            "color": "brown",
+            "steps": [
+                "Drop, Cover, and Hold On.",
+                "Stay away from windows, glass, and heavy furniture.",
+                "If outdoors, move away from buildings, streetlights, and utility wires.",
+                "Do not use elevators. Wait for tremors to stop before moving."
             ]
         }
     ]

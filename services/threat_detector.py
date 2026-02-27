@@ -6,6 +6,7 @@ Thresholds:
   - Ultrasonic: < 50 cm = warning, < 20 = critical
   - Temperature: > 30 C = warning, > 45 = critical
   - Humidity: > 60% = warning, > 85% = critical
+  - Earthquake: > 2.0 = warning, > 5.0 = critical
 """
 from datetime import datetime
 from collections import deque
@@ -96,6 +97,20 @@ class ThreatDetector:
                 "FLOOD WARNING -- EVACUATE",
                 f"Critical water level ({distance_cm:.1f} cm)! Flash flood imminent!", distance_cm)
 
+    def detect_earthquake(self, magnitude):
+        if magnitude < 2.0:
+            return _create_alert("earthquake", SAFE,
+                "Seismic Activity Normal",
+                f"No significant seismic activity detected (Magnitude {magnitude:.1f}).", magnitude)
+        elif magnitude < 5.0:
+            return _create_alert("earthquake", WARNING,
+                "Minor Earthquake Detected",
+                f"Minor seismic event detected (Magnitude {magnitude:.1f}). Stay alert.", magnitude)
+        else:
+            return _create_alert("earthquake", CRITICAL,
+                "MAJOR EARTHQUAKE ALERT",
+                f"Critical seismic event (Magnitude {magnitude:.1f})! Drop, Cover, and Hold On!", magnitude)
+
     def analyze(self, sensor_type, value):
         if sensor_type == "temperature":
             return self.detect_temperature(value)
@@ -105,4 +120,6 @@ class ThreatDetector:
             return self.detect_gas_threat(value)
         elif sensor_type == "ultrasonic":
             return self.detect_water_level(value)
+        elif sensor_type == "earthquake":
+            return self.detect_earthquake(value)
         return None

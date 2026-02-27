@@ -258,6 +258,11 @@ class ApiService {
       if (value > 2000) return 'warning';
       return 'safe';
     }
+    if (type == 'earthquake') {
+      if (value < 2.0) return 'safe';
+      if (value < 5.0) return 'warning';
+      return 'critical';
+    }
     return 'safe';
   }
 }
