@@ -11,8 +11,7 @@ import os
 from dotenv import load_dotenv
 
 load_dotenv()
-FRONTEND_SERVER_IP = os.getenv("FRONTEND_SERVER_IP", "localhost")
-FRONTEND_SERVER_PORT = os.getenv("FRONTEND_SERVER_PORT", "3030")
+FRONTEND_SERVER_URL = os.getenv("FRONTEND_SERVER_URL", "http://localhost:3030")
 
 router = APIRouter(prefix="/positions", tags=["positions"])
 
@@ -31,7 +30,7 @@ def generate_position_hash(pos_dict: dict, action: str) -> str:
 
 def send_to_blockchain(sensor_id: int, data_hash: str):
     """Sends the hash to the local Rust blockchain service."""
-    url = f"http://{FRONTEND_SERVER_IP}:{FRONTEND_SERVER_PORT}/register" # Changed to use environment variables
+    url = f"{FRONTEND_SERVER_URL}/register" 
     payload = {
         "sensor_id": sensor_id,
         "data_hash": data_hash
@@ -45,7 +44,7 @@ def send_to_blockchain(sensor_id: int, data_hash: str):
 
     # Forward the new sensor registration payload to the standalone Notification Server
     try:
-        url = f"http://{FRONTEND_SERVER_IP}:{FRONTEND_SERVER_PORT}/register"
+        url = f"{FRONTEND_SERVER_URL}/register"
         response = requests.post(url, json=payload, timeout=5)
         response.raise_for_status()
         print(f"✅ Notification server sync success for sensor {sensor_id}: {response.json()}")

@@ -34,9 +34,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DROIDCAM_IP = os.getenv("DROIDCAM_IP", "10.10.168.105")
-DROIDCAM_PORT = os.getenv("DROIDCAM_PORT", "4747")
-DROIDCAM_URL = f"http://{DROIDCAM_IP}:{DROIDCAM_PORT}/video"
+DROIDCAM_URL = os.getenv("DROIDCAM_URL", "http://192.168.1.4:4747/video")
 
 # Try to load YOLOv8 model for Fire & Accident detection
 FIRE_MODEL = None
