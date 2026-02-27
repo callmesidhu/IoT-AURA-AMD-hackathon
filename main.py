@@ -21,7 +21,7 @@ threat_analyzer = ThreatDetector()
 # Create DB tables on startup
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Satwa Sensor Dashboard")
+app = FastAPI(title="AURA Sensor Dashboard")
 
 # Global in-memory store for latest readings per sensor
 latest_sensor_data = {}
