@@ -674,7 +674,7 @@
         </div>
       </div>
 
-    <div class="form-group" style="margin-bottom:10px">
+      <div class="form-group" style="margin-bottom:10px">
         <label>Sensor Type</label>
         <select id="f-type">
           <option value="temperature">🌡 Temperature</option>
@@ -915,7 +915,7 @@
     // ================================================================
     function buildPopupContent(sensor, lv) {
       const val = lv ? `${lv.value} ${UNITS[sensor.sensor_type] || ''}` : 'No data yet';
-      const ts = lv ? new Date(lv.timestamp + 'Z').toLocaleTimeString() : '—';
+      const ts = lv ? new Date(lv.timestamp).toLocaleTimeString() : '—';
       return `<div class="popup-name">${sensor.name}</div>
           <div class="popup-value" style="color:${getStatusColor(sensor, lv)}">${val}</div>
           <div class="popup-type">${sensor.sensor_type}</div>
@@ -941,7 +941,7 @@
         const lv = latestValues[s.sensor_type];
         const status = lv ? getStatus(s.sensor_type, lv.value) : 'normal';
         const val = lv ? lv.value : '—';
-        const ts = lv ? new Date(lv.timestamp + 'Z').toLocaleTimeString() : 'No data';
+        const ts = lv ? new Date(lv.timestamp).toLocaleTimeString() : 'No data';
         const color = STATUS_COLORS[status];
         const unit = UNITS[s.sensor_type] || '';
 
@@ -1087,28 +1087,28 @@
           updateDangerZones(data.sensor, threatLevel);
           // If the backend sent a specific banner alert, show it
           if (data.alert) {
-             showAlertBanner(data.alert);
+            showAlertBanner(data.alert);
           } else {
-             // Otherwise, just a generic alert banner
-             showAlertBanner({
-               sensor: data.sensor,
-               severity: threatLevel,
-               title: `${data.sensor.toUpperCase()} ALERT`,
-               message: `Sensor value ${data.value} exceeded threshold.`
-             });
+            // Otherwise, just a generic alert banner
+            showAlertBanner({
+              sensor: data.sensor,
+              severity: threatLevel,
+              title: `${data.sensor.toUpperCase()} ALERT`,
+              message: `Sensor value ${data.value} exceeded threshold.`
+            });
           }
 
           if (threatLevel === 'critical') {
-              playAlertBeep();
-              // Evacuation route for first matching physical sensor
-              const affected = sensors.filter(s => s.sensor_type === data.sensor);
-              if (affected.length > 0) {
-                // Fetch and draw evacuation route ONLY on critical
-                fetchEvacuationRoute(affected[0].lat, affected[0].lng);
-              }
+            playAlertBeep();
+            // Evacuation route for first matching physical sensor
+            const affected = sensors.filter(s => s.sensor_type === data.sensor);
+            if (affected.length > 0) {
+              // Fetch and draw evacuation route ONLY on critical
+              fetchEvacuationRoute(affected[0].lat, affected[0].lng);
+            }
           } else {
-             // Warning: clear any existing evacuation route (if it just downgraded)
-             clearEvacuationRoute();
+            // Warning: clear any existing evacuation route (if it just downgraded)
+            clearEvacuationRoute();
           }
         } else {
           updateDangerZones(data.sensor, 'safe');

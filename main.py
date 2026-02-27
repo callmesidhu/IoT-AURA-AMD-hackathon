@@ -96,7 +96,7 @@ def poll_camera_fire_detection_sync():
                     alert_payload = {
                         "sensor": "camera",
                         "value": int(confidence_val * 100),
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                         "threat_level": "critical",
                         "alert": {
                             "title": f"{danger_type} DETECTED!",
@@ -114,7 +114,7 @@ def poll_camera_fire_detection_sync():
                     safe_payload = {
                         "sensor": "camera",
                         "value": 0,
-                        "timestamp": datetime.now().isoformat(),
+                        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                         "threat_level": "safe"
                     }
                     latest_sensor_data["camera"] = safe_payload
@@ -247,7 +247,7 @@ async def process_sensor(sensor_name: str, value: float):
     payload = {
         "sensor": sensor_name,
         "value": value,
-        "timestamp": datetime.now(timezone.utc).isoformat()
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     }
     
     # Analyze threat level via ThreatDetector
