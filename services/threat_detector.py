@@ -97,18 +97,18 @@ class ThreatDetector:
                 "FLOOD WARNING -- EVACUATE",
                 f"Critical water level ({distance_cm:.1f} cm)! Flash flood imminent!", distance_cm)
 
-    def detect_earthquake(self, magnitude):
+    def detect_seismic(self, magnitude):
         if magnitude < 2.0:
-            return _create_alert("earthquake", SAFE,
+            return _create_alert("seismic", SAFE,
                 "Seismic Activity Normal",
                 f"No significant seismic activity detected (Magnitude {magnitude:.1f}).", magnitude)
         elif magnitude < 5.0:
-            return _create_alert("earthquake", WARNING,
-                "Minor Earthquake Detected",
+            return _create_alert("seismic", WARNING,
+                "Minor Seismic Activity Detected",
                 f"Minor seismic event detected (Magnitude {magnitude:.1f}). Stay alert.", magnitude)
         else:
-            return _create_alert("earthquake", CRITICAL,
-                "MAJOR EARTHQUAKE ALERT",
+            return _create_alert("seismic", CRITICAL,
+                "MAJOR SEISMIC ALERT",
                 f"Critical seismic event (Magnitude {magnitude:.1f})! Drop, Cover, and Hold On!", magnitude)
 
     def analyze(self, sensor_type, value):
@@ -120,6 +120,6 @@ class ThreatDetector:
             return self.detect_gas_threat(value)
         elif sensor_type == "ultrasonic":
             return self.detect_water_level(value)
-        elif sensor_type == "earthquake":
-            return self.detect_earthquake(value)
+        elif sensor_type == "seismic":
+            return self.detect_seismic(value)
         return None

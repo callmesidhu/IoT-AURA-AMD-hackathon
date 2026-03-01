@@ -315,13 +315,13 @@
       border: 1px solid rgba(248, 81, 73, 0.3);
     }
 
-    .badge-ultra-sonic {
+    .badge-ultrasonic {
       background: rgba(63, 185, 80, 0.15);
       color: var(--accent2);
       border: 1px solid rgba(63, 185, 80, 0.3);
     }
 
-    .badge-earthquake {
+    .badge-seismic {
       background: rgba(139, 69, 19, 0.15);
       color: #cd853f;
       border: 1px solid rgba(139, 69, 19, 0.3);
@@ -680,9 +680,9 @@
           <option value="temperature">🌡 Temperature</option>
           <option value="humidity">💧 Humidity</option>
           <option value="gas-leakage">💨 Gas Leakage</option>
-          <option value="ultra-sonic">📡 Ultra-Sonic</option>
+          <option value="ultrasonic">📡 Ultra-Sonic</option>
           <option value="camera">📷 Camera/Fire</option>
-          <option value="earthquake">📳 Earthquake</option>
+          <option value="seismic">📳 Seismic Activity</option>
         </select>
       </div>
 
@@ -729,8 +729,8 @@
       'temperature': '°C',
       'humidity': '%',
       'gas-leakage': 'ppm',
-      'ultra-sonic': 'cm',
-      'earthquake': 'M'
+      'ultrasonic': 'cm',
+      'seismic': 'M'
     };
 
     // Sensor icons
@@ -738,9 +738,9 @@
       'temperature': '🌡',
       'humidity': '💧',
       'gas-leakage': '💨',
-      'ultra-sonic': '📡',
+      'ultrasonic': '📡',
       'camera': '📷',
-      'earthquake': '📳'
+      'seismic': '📳'
     };
 
     // Threshold logic → returns 'normal' | 'warning' | 'alert'
@@ -770,7 +770,7 @@
         if (value > 2000) return 'warning';
         return 'normal';
       }
-      if (type === 'earthquake') {
+      if (type === 'seismic') {
         if (value < 2.0) return 'normal';
         if (value < 5.0) return 'warning';
         return 'alert';
@@ -1014,11 +1014,11 @@
       // Per-sensor-type colors
       const zoneColors = {
         'gas-leakage': { critical: '#f85149', warning: '#d29922' },
-        'ultra-sonic': { critical: '#388bfd', warning: '#58a6ff' },
+        'ultrasonic': { critical: '#388bfd', warning: '#58a6ff' },
         'temperature': { critical: '#f88800', warning: '#d29922' },
         'humidity': { critical: '#58a6ff', warning: '#388bfd' },
         'camera': { critical: '#f85149', warning: '#d29922' }, // fire
-        'earthquake': { critical: '#8b4513', warning: '#d2691e' }, // brown/orange
+        'seismic': { critical: '#8b4513', warning: '#d2691e' }, // brown/orange
       };
       const colors = zoneColors[sensorType] || { critical: '#f85149', warning: '#d29922' };
 
@@ -1070,9 +1070,7 @@
       ws.onmessage = (evt) => {
         const data = JSON.parse(evt.data);
         // data = { sensor, value, timestamp, threat_level, alert }
-        latestValues[data.sensor] = { value: data.value, timestamp: data.timestamp };
-        updateForSensorType(data.sensor);
-
+        
         // Derive local threat level from value if not provided explicitly
         let threatLevel = data.threat_level;
         if (!threatLevel) {
@@ -1081,6 +1079,9 @@
           else if (status === 'warning') threatLevel = 'warning';
           else threatLevel = 'safe';
         }
+
+        latestValues[data.sensor] = { value: data.value, timestamp: data.timestamp, threat_level: threatLevel };
+        updateForSensorType(data.sensor);
 
         // Handle threat alerts and zones
         if (threatLevel && threatLevel !== 'safe') {
@@ -1112,9 +1113,13 @@
           }
         } else {
           updateDangerZones(data.sensor, 'safe');
-          clearEvacuationRoute();
-          // Clear banner if this sensor was the source
-          if (currentAlert && currentAlert.sensor === data.sensor) dismissBanner();
+          // Only clear evacuation route if NO OTHER sensor is critical
+          const anyCritical = Object.values(latestValues).some(v => v.threat_level === 'critical');
+          if (!anyCritical) {
+            clearEvacuationRoute();
+            // Clear banner if this sensor was the source
+            if (currentAlert && currentAlert.sensor === data.sensor) dismissBanner();
+          }
         }
       };
     }

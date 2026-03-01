@@ -275,9 +275,9 @@ async def temperature(data: ValueOnly):
     await process_sensor("temperature", data.value)
     return {"status": "ok"}
 
-@app.post("/sensor/earthquake")
+@app.post("/sensor/seismic")
 async def earthquake(data: ValueOnly):
-    await process_sensor("earthquake", data.value)
+    await process_sensor("seismic", data.value)
     return {"status": "ok"}
 
 @app.post("/sensor/humidity")
@@ -336,7 +336,7 @@ async def get_evacuation_route(danger_lat: float, danger_lng: float):
 
 @app.post("/sensor/ultrasonic")
 async def ultrasonic(data: ValueOnly):
-    await process_sensor("ultra-sonic", data.value)
+    await process_sensor("ultrasonic", data.value)
     return {"status": "ok"}
 
 
